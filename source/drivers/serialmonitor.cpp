@@ -97,7 +97,7 @@ namespace drivers{
      */
     void CSerialMonitor::_run()
     {
-        if ((!m_RxBuffer.isEmpty()))
+        while ((!m_RxBuffer.isEmpty()))
         {
             char l_c = m_RxBuffer.pop(); // Read the next character from buffer
 
@@ -106,7 +106,7 @@ namespace drivers{
                 m_parseIt = m_parseBuffer.begin();
                 m_parseIt[0] = l_c;
                 m_parseIt++;
-                return;
+                continue;
             }
             if (m_parseIt != m_parseBuffer.end())
             {
@@ -147,7 +147,7 @@ namespace drivers{
                 }
                 m_parseIt[0] = l_c;
                 m_parseIt++;
-                return;
+                continue;
             }
         }
     }
