@@ -56,6 +56,8 @@
 #include <drivers/serialmonitor.hpp>
 /* Header file for the robot state machine, which deals with the cars movement (steering and speed) */
 #include <brain/robotstatemachine.hpp>
+/* Header file for the move list executor, which executes batched trajectory moves */
+#include <brain/movelistexecutor.hpp>
 /* Header file for the task manager library, which  applies periodically the fun function of it's children*/
 #include <utils/taskmanager.hpp>
 /* Header file for the task manager library, which  applies periodically the fun function of it's children*/
