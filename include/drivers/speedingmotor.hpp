@@ -36,6 +36,11 @@
 #include <mbed.h>
 #include <brain/globalsv.hpp>
 
+namespace periodics
+{
+    class CEncoder;
+}
+
 namespace drivers
 {
     /**
@@ -67,7 +72,8 @@ namespace drivers
             CSpeedingMotor(
                 PinName     f_pwm_pin,
                 int       f_inf_limit,
-                int       f_sup_limit
+                int       f_sup_limit,
+                periodics::CEncoder& f_encoder
             );
             /* Destructor */
             ~CSpeedingMotor();
@@ -91,6 +97,8 @@ namespace drivers
             const int m_inf_limit;
             /** @brief Superior limit */
             const int m_sup_limit;
+            /* Encoder used for measured speed feedback */
+            periodics::CEncoder& m_encoder;
 
             /* interpolate the pwm value based on the speed value */
             int16_t interpolate(int speed, const int speedValuesP[], const int speedValuesN[], const int pwmValuesP[], const int pwmValuesN[], int size);

@@ -56,10 +56,13 @@ periodics::CInstantConsumption g_instantconsumption(g_baseTick * 1000, A2, g_rpi
 periodics::CTotalVoltage g_totalvoltage(g_baseTick*3000, A4, g_rpi);
 
 // It's a task for sending periodically the IMU values
-periodics::CImu g_imu(g_baseTick*150, g_rpi, I2C_SDA, I2C_SCL);
+periodics::CImu g_imu(g_baseTick*50, g_rpi, I2C_SDA, I2C_SCL);
+
+// It's a task for measuring the wheel speed using the PWM encoder.
+periodics::CEncoder g_encoder(g_baseTick * 4, g_rpi, D2);
 
 //PIN for a motor speed in ms, inferior and superior limit
-drivers::CSpeedingMotor g_speedingDriver(D3, -500, 500); //speed in mm/s
+drivers::CSpeedingMotor g_speedingDriver(D3, -500, 500, g_encoder); //speed in mm/s
 
 //PIN for angle in servo degrees, inferior and superior limit scaled by 10 for precision (250 = 25.0°)
 drivers::CSteeringMotor g_steeringDriver(D4, -250, 250);
@@ -91,6 +94,7 @@ drivers::CSerialMonitor::CSerialSubscriberMap g_serialMonitorSubscribers = {
     {"battery",        mbed::callback(&g_totalvoltage,      &periodics::CTotalVoltage::serialCallbackTOTALVcommand)},
     {"instant",        mbed::callback(&g_instantconsumption,&periodics::CInstantConsumption::serialCallbackINSTANTcommand)},
     {"imu",            mbed::callback(&g_imu,               &periodics::CImu::serialCallbackIMUcommand)},
+    {"encoder",        mbed::callback(&g_encoder,           &periodics::CEncoder::serialCallbackENCODERcommand)},
     {"kl",             mbed::callback(&g_klmanager,         &brain::CKlmanager::serialCallbackKLCommand)},
     {"batteryCapacity",mbed::callback(&g_batteryManager,    &brain::CBatterymanager::serialCallbackBATTERYCommand)},
     {"resourceMonitor",mbed::callback(&g_resourceMonitor,   &periodics::CResourcemonitor::serialCallbackRESMONCommand)},
@@ -108,6 +112,7 @@ utils::CTask* g_taskList[] = {
     &g_instantconsumption,
     &g_totalvoltage,
     &g_imu,
+    &g_encoder,
     &g_robotstatemachine,
     &g_serialMonitor,
     &g_powermanager,

@@ -51,8 +51,8 @@ namespace periodics
         public:
             /* Construnctor */
             CBlinker(
-                std::chrono::milliseconds            f_period, 
-                mbed::DigitalOut    f_led
+                std::chrono::milliseconds            f_period,
+                PinName             f_ledPin
             );
             /* Destructor */
             ~CBlinker();

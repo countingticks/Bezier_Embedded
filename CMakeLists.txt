@@ -7,9 +7,9 @@ set(MBED_PATH ${CMAKE_CURRENT_SOURCE_DIR}/mbed-os CACHE INTERNAL "")
 set(MBED_CONFIG_PATH ${CMAKE_CURRENT_BINARY_DIR} CACHE INTERNAL "")
 set(APP_TARGET robot_car)
 
-include(${MBED_PATH}/tools/cmake/app.cmake)
+project(${APP_TARGET} LANGUAGES NONE)
 
-project(${APP_TARGET})
+include(${MBED_PATH}/tools/cmake/app.cmake)
 
 add_subdirectory(${MBED_PATH})
 
@@ -19,6 +19,7 @@ file(GLOB_RECURSE MY_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/source/drivers/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/periodics/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/utils/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/PwmIn/*.cpp"
 )
 
 add_executable(${APP_TARGET} ${MY_SOURCE_FILES})
@@ -31,6 +32,7 @@ set(includeDirs
     ${CMAKE_CURRENT_SOURCE_DIR}/include/drivers
     ${CMAKE_CURRENT_SOURCE_DIR}/include/utils
     ${CMAKE_CURRENT_SOURCE_DIR}/include/periodics
+    ${CMAKE_CURRENT_SOURCE_DIR}/PwmIn
 )
 
 target_include_directories(${APP_TARGET}

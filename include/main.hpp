@@ -38,6 +38,8 @@
 #include <periodics/blinker.hpp>
 /* Header file for the IMU functionality */
 #include <periodics/imu.hpp>
+/* Header file for the encoder functionality */
+#include <periodics/encoder.hpp>
 /* Header file for the instant consumption measurement functionality */
 #include <periodics/instantconsumption.hpp>
 /* Header file for the total voltage measurement functionality */

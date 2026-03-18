@@ -40,11 +40,11 @@ namespace periodics{
      *  \param f_led          Digital output line to LED
      */
     CBlinker::CBlinker(
-            std::chrono::milliseconds            f_period, 
-            mbed::DigitalOut    f_led
-        ) 
+            std::chrono::milliseconds f_period,
+            PinName                  f_ledPin
+        )
         : utils::CTask(f_period)
-        , m_led(f_led) 
+        , m_led(f_ledPin)
     {
         m_led = 1;
     }

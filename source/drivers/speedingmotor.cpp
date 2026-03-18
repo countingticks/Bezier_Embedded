@@ -29,6 +29,7 @@
 */
 
 #include <drivers/speedingmotor.hpp>
+#include <periodics/encoder.hpp>
 
 #define calibrated 0
 #define calib_sup_limit 500
@@ -46,11 +47,13 @@ namespace drivers{
     CSpeedingMotor::CSpeedingMotor(
             PinName f_pwm_pin, 
             int f_inf_limit, 
-            int f_sup_limit
+            int f_sup_limit,
+            periodics::CEncoder& f_encoder
         )
         : m_pwm_pin(f_pwm_pin)
         , m_inf_limit(f_inf_limit)
         , m_sup_limit(f_sup_limit)
+        , m_encoder(f_encoder)
     {
         // Set the ms_period on the pwm_pin
         m_pwm_pin.period_ms(ms_period); 
@@ -71,6 +74,7 @@ namespace drivers{
     void CSpeedingMotor::setSpeed(int f_speed)
     {
         pwm_value = zero_default;
+        m_encoder.setSpeedReference(static_cast<float>(f_speed));
 
         if (f_speed != 0) {
             if (calibrated == 1)
@@ -103,6 +107,7 @@ namespace drivers{
      */
     void CSpeedingMotor::setBrake()
     {
+        m_encoder.setSpeedReference(0.0f);
         m_pwm_pin.pulsewidth_us(zero_default);
     };
 
