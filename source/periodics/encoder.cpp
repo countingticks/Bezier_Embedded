@@ -35,10 +35,10 @@
 #include <cstdio>
 #include <cstring>
 
-#define PI_FLOAT 3.14159265358979323846f
-#define SPEED_GATE_RATIO 0.15f
-#define MIN_REFERENCE_FOR_RATIO_GATE 1.0f
-#define DEGREE_PER_MM -14.5f
+#define PI_FLOAT 3.14159265358979323846
+#define SPEED_GATE_RATIO 0.15f // reference filter
+#define MIN_REFERENCE_FOR_RATIO_GATE 1.0f // reference filter
+#define DEGREE_PER_MM -14.5f // not used
 #define WHEEL_DIAMETER 64.0f
 #define SPEED_FILTER_CUTOFF_HZ 30.0f
 #define ACCELERATION_FILTER_ALPHA 0.2f
