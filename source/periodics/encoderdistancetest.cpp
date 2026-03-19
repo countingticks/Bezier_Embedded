@@ -121,6 +121,9 @@ namespace periodics
     void CEncoderDistanceTest::finishTest()
     {
         char l_buffer[96];
+        // Refresh once more so the reported distance includes the latest encoder
+        // sample up to the stop decision.
+        m_lastDistanceMm = m_encoder.getTravelDistanceMm();
         const int l_distanceMm = static_cast<int>(roundf(m_lastDistanceMm));
         const int l_averageSpeedMmPerSec = static_cast<int>(
             roundf((m_lastDistanceMm * 1000.0f) / static_cast<float>(m_testDuration.count()))

@@ -272,8 +272,10 @@ namespace periodics
     void CEncoder::resetTravelDistance()
     {
         m_totalDisplacement = 0.0f;
-        m_hasDisplacementReference = false;
-        m_lastDisplacementRawAngle = 0.0f;
+        // Seed the displacement reference immediately so the first motion after
+        // reset is counted, instead of waiting for the next polling cycle.
+        m_lastDisplacementRawAngle = m_pwm.dutycycle() * 360.0f;
+        m_hasDisplacementReference = true;
     }
 
     float CEncoder::getTravelDistanceMm()
