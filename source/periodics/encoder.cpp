@@ -269,6 +269,18 @@ namespace periodics
         return m_totalDisplacement;
     }
 
+    void CEncoder::resetTravelDistance()
+    {
+        m_totalDisplacement = 0.0f;
+        m_hasDisplacementReference = false;
+        m_lastDisplacementRawAngle = 0.0f;
+    }
+
+    float CEncoder::getTravelDistanceMm()
+    {
+        return convertAngularToLinear(getTotalDisplacementDegrees());
+    }
+
     float CEncoder::getLinearSpeed()
     {
         if (!m_timerStarted)
@@ -345,13 +357,8 @@ namespace periodics
 
         // Keep the raw measured encoder speed visible while the car calibration is still in progress.
         // m_lastLinearSpeed = applyReferenceFilter(l_speedDegPerSec / DEGREE_PER_MM);
-        const float l_motorShaftRatio = 62.0f / 24.0f;
-        const float l_shaftDiffRatio = 34.0f / 11.0f;
-        const float l_wheelCircumference = WHEEL_DIAMETER * PI_FLOAT;
-        const float l_gearRatio = l_motorShaftRatio * l_shaftDiffRatio;
-
-        m_lastLinearSpeed = -(l_speedDegPerSec * l_wheelCircumference) / (360.0f * l_gearRatio);
-        m_lastLinearAcceleration = -(l_rawAcceleration * l_wheelCircumference) / (360.0f * l_gearRatio);
+        m_lastLinearSpeed = convertAngularToLinear(l_speedDegPerSec);
+        m_lastLinearAcceleration = convertAngularToLinear(l_rawAcceleration);
 
         // m_lastLinearSpeed = l_speedDegPerSec / DEGREE_PER_MM;
         // m_lastLinearAcceleration = m_lastAngularAcceleration / DEGREE_PER_MM;
@@ -466,6 +473,16 @@ namespace periodics
         }
 
         return f_speedMmPerSec;
+    }
+
+    float CEncoder::convertAngularToLinear(float f_angularQuantity) const
+    {
+        const float l_motorShaftRatio = 62.0f / 24.0f;
+        const float l_shaftDiffRatio = 34.0f / 11.0f;
+        const float l_wheelCircumference = WHEEL_DIAMETER * PI_FLOAT;
+        const float l_gearRatio = l_motorShaftRatio * l_shaftDiffRatio;
+
+        return -(f_angularQuantity * l_wheelCircumference) / (360.0f * l_gearRatio);
     }
 
     void CEncoder::publishSpeed()

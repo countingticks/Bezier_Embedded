@@ -83,6 +83,8 @@ namespace periodics
             float readAngularSpeed();
             float readAngularAcceleration();
             float getTotalDisplacementDegrees();
+            void resetTravelDistance();
+            float getTravelDistanceMm();
             float getLinearSpeed();
             float getLinearAcceleration();
 
@@ -95,6 +97,7 @@ namespace periodics
             float applyHysteresis(float f_angle);
             float applySpeedHysteresis(float f_speed);
             float applyReferenceFilter(float f_speedMmPerSec) const;
+            float convertAngularToLinear(float f_angularQuantity) const;
             void publishSpeed();
 
             struct CBiquad

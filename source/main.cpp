@@ -66,6 +66,7 @@ drivers::CSpeedingMotor g_speedingDriver(D3, -500, 500, g_encoder); //speed in m
 
 //PIN for angle in servo degrees, inferior and superior limit scaled by 10 for precision (250 = 25.0°)
 drivers::CSteeringMotor g_steeringDriver(D4, -250, 250);
+periodics::CEncoderDistanceTest g_encoderDistanceTest(g_baseTick * 4, g_rpi, g_encoder, g_steeringDriver, g_speedingDriver);
 
 // Create the motion controller, which controls the robot states and the robot moves based on the transmitted command over the serial interface.
 brain::CRobotStateMachine g_robotstatemachine(g_baseTick * 1, g_rpi, g_steeringDriver, g_speedingDriver);
@@ -95,6 +96,7 @@ drivers::CSerialMonitor::CSerialSubscriberMap g_serialMonitorSubscribers = {
     {"instant",        mbed::callback(&g_instantconsumption,&periodics::CInstantConsumption::serialCallbackINSTANTcommand)},
     {"imu",            mbed::callback(&g_imu,               &periodics::CImu::serialCallbackIMUcommand)},
     {"encoder",        mbed::callback(&g_encoder,           &periodics::CEncoder::serialCallbackENCODERcommand)},
+    {"encTest",        mbed::callback(&g_encoderDistanceTest,&periodics::CEncoderDistanceTest::serialCallbackENCTESTcommand)},
     {"kl",             mbed::callback(&g_klmanager,         &brain::CKlmanager::serialCallbackKLCommand)},
     {"batteryCapacity",mbed::callback(&g_batteryManager,    &brain::CBatterymanager::serialCallbackBATTERYCommand)},
     {"resourceMonitor",mbed::callback(&g_resourceMonitor,   &periodics::CResourcemonitor::serialCallbackRESMONCommand)},
@@ -113,6 +115,7 @@ utils::CTask* g_taskList[] = {
     &g_totalvoltage,
     &g_imu,
     &g_encoder,
+    &g_encoderDistanceTest,
     &g_robotstatemachine,
     &g_serialMonitor,
     &g_powermanager,
