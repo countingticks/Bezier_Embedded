@@ -39,7 +39,7 @@
 #define SPEED_GATE_RATIO 0.15f // reference filter
 #define MIN_REFERENCE_FOR_RATIO_GATE 1.0f // reference filter
 #define DEGREE_PER_MM -14.5f // not used
-#define WHEEL_DIAMETER 64.0f
+#define WHEEL_DIAMETER 67.0f
 #define SPEED_FILTER_CUTOFF_HZ 30.0f
 #define ACCELERATION_FILTER_ALPHA 0.2f
 #define MIN_HAMPEL_THRESHOLD 0.5f
@@ -118,10 +118,11 @@ namespace periodics
     CEncoder::CEncoder(
             std::chrono::milliseconds f_period,
             UnbufferedSerial& f_serial,
-            PinName f_pwmPin
+            PinName f_sdaPin,
+            PinName f_sclPin
         )
         : utils::CTask(f_period)
-        , m_pwm(f_pwmPin)
+        , m_i2c(f_sdaPin, f_sclPin)
         , m_serial(f_serial)
         , m_isActive(false)
         , m_speedReference(0.0f)
@@ -131,6 +132,7 @@ namespace periodics
         , m_lastLinearSpeed(0.0f)
         , m_lastLinearAcceleration(0.0f)
         , m_previousRawAngle(0.0f)
+        , m_lastRawAngleDegrees(0.0f)
         , m_unwrapRevolutions(0)
         , m_publishAccumulator(0.0f)
         , m_lastTimerUs(0)
@@ -151,6 +153,8 @@ namespace periodics
         , m_sinFilter()
         , m_cosFilter()
     {
+        m_i2c.frequency(400000);
+
         const float l_dt = static_cast<float>(f_period.count()) / 1000.0f;
         const float l_cutoffHz = SPEED_FILTER_CUTOFF_HZ;
         const float l_k = tanf(PI_FLOAT * l_cutoffHz / (1.0f / l_dt));
@@ -203,9 +207,31 @@ namespace periodics
         m_speedReferenceHistory[c_speedReferenceHistorySize - 1U] = f_speed;
     }
 
+    float CEncoder::getRawAngleDegrees()
+    {
+        char l_register = c_rawAngleHighRegister;
+        char l_data[2] = {0, 0};
+
+        if (0 != m_i2c.write(c_as5600Address, &l_register, 1, true))
+        {
+            return m_lastRawAngleDegrees;
+        }
+
+        if (0 != m_i2c.read(c_as5600Address, l_data, 2, false))
+        {
+            return m_lastRawAngleDegrees;
+        }
+
+        const uint16_t l_rawAngle = ((static_cast<uint8_t>(l_data[0]) & 0x0F) << 8)
+                                  | static_cast<uint8_t>(l_data[1]);
+
+        m_lastRawAngleDegrees = static_cast<float>(l_rawAngle) * 360.0f / 4096.0f;
+        return m_lastRawAngleDegrees;
+    }
+
     float CEncoder::readAngleDegrees()
     {
-        const float l_rawAngleDegrees = m_pwm.dutycycle() * 360.0f;
+        const float l_rawAngleDegrees = getRawAngleDegrees();
         const float l_rawAngleRadians = l_rawAngleDegrees * PI_FLOAT / 180.0f;
         const float l_sin = sinf(l_rawAngleRadians);
         const float l_cos = cosf(l_rawAngleRadians);
@@ -243,7 +269,7 @@ namespace periodics
 
     float CEncoder::getTotalDisplacementDegrees()
     {
-        const float l_rawAngle = m_pwm.dutycycle() * 360.0f;
+        const float l_rawAngle = getRawAngleDegrees();
 
         if (!m_hasDisplacementReference)
         {
@@ -274,7 +300,7 @@ namespace periodics
         m_totalDisplacement = 0.0f;
         // Seed the displacement reference immediately so the first motion after
         // reset is counted, instead of waiting for the next polling cycle.
-        m_lastDisplacementRawAngle = m_pwm.dutycycle() * 360.0f;
+        m_lastDisplacementRawAngle = getRawAngleDegrees();
         m_hasDisplacementReference = true;
     }
 
@@ -317,7 +343,7 @@ namespace periodics
         if (m_lastTimerUs == 0)
         {
             m_lastTimerUs = l_nowUs;
-            m_previousRawAngle = m_pwm.dutycycle() * 360.0f;
+            m_previousRawAngle = getRawAngleDegrees();
             return 0.0f;
         }
 
@@ -329,7 +355,7 @@ namespace periodics
             return m_lastAngularSpeed;
         }
 
-        const float l_rawAngleDegrees = m_pwm.dutycycle() * 360.0f;
+        const float l_rawAngleDegrees = getRawAngleDegrees();
         const float l_wrapDiff = l_rawAngleDegrees - m_previousRawAngle;
 
         if (l_wrapDiff > 180.0f)
@@ -484,7 +510,7 @@ namespace periodics
         const float l_wheelCircumference = WHEEL_DIAMETER * PI_FLOAT;
         const float l_gearRatio = l_motorShaftRatio * l_shaftDiffRatio;
 
-        return -(f_angularQuantity * l_wheelCircumference) / (360.0f * l_gearRatio);
+        return (f_angularQuantity * l_wheelCircumference) / (360.0f * l_gearRatio);
     }
 
     void CEncoder::publishSpeed()

@@ -39,8 +39,6 @@
 #include <chrono>
 #include <cstddef>
 
-#include "PwmIn.h"
-
 namespace periodics
 {
     struct CEncoderKalman2D
@@ -69,7 +67,8 @@ namespace periodics
             CEncoder(
                 std::chrono::milliseconds f_period,
                 UnbufferedSerial& f_serial,
-                PinName f_pwmPin
+                PinName f_sdaPin,
+                PinName f_sclPin
             );
             /* Destructor */
             ~CEncoder();
@@ -93,6 +92,7 @@ namespace periodics
             virtual void _run();
 
             float readAngularSpeedKalman();
+            float getRawAngleDegrees();
             float applyHampel(float f_newSample);
             float applyHysteresis(float f_angle);
             float applySpeedHysteresis(float f_speed);
@@ -118,8 +118,8 @@ namespace periodics
             static constexpr size_t c_hampelWindow = 7;
             static constexpr size_t c_speedReferenceHistorySize = 5;
 
-            /* PWM input pin */
-            PwmIn m_pwm;
+            /* AS5600 encoder on I2C */
+            I2C m_i2c;
             /* @brief Serial communication obj.  */
             UnbufferedSerial& m_serial;
             /* @brief Active flag  */
@@ -136,8 +136,10 @@ namespace periodics
             float m_lastLinearSpeed;
             /* @brief Last published linear acceleration in mm/s² */
             float m_lastLinearAcceleration;
-            /* @brief Last raw PWM angle for unwrap */
+            /* @brief Last raw encoder angle for unwrap */
             float m_previousRawAngle;
+            /* @brief Last valid raw angle measurement in degrees */
+            float m_lastRawAngleDegrees;
             /* @brief Revolution counter for unwrap */
             int m_unwrapRevolutions;
             /* @brief Publish accumulator in seconds */
@@ -167,6 +169,9 @@ namespace periodics
             CEncoderKalman2D m_kalman;
             CBiquad m_sinFilter;
             CBiquad m_cosFilter;
+
+            static constexpr int c_as5600Address = 0x36 << 1;
+            static constexpr char c_rawAngleHighRegister = 0x0C;
     }; // class CEncoder
 }; // namespace periodics
 

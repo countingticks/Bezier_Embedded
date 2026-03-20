@@ -58,8 +58,8 @@ periodics::CTotalVoltage g_totalvoltage(g_baseTick*3000, A4, g_rpi);
 // It's a task for sending periodically the IMU values
 periodics::CImu g_imu(g_baseTick*50, g_rpi, I2C_SDA, I2C_SCL);
 
-// It's a task for measuring the wheel speed using the PWM encoder.
-periodics::CEncoder g_encoder(g_baseTick * 4, g_rpi, D2);
+// It's a task for measuring the wheel speed using the AS5600 encoder over I2C.
+periodics::CEncoder g_encoder(g_baseTick * 4, g_rpi, D5, D7);
 
 //PIN for a motor speed in ms, inferior and superior limit
 drivers::CSpeedingMotor g_speedingDriver(D3, -500, 500, g_encoder); //speed in mm/s
