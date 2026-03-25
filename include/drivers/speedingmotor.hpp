@@ -105,9 +105,9 @@ namespace drivers
 
             int computePWMPolynomial(int speed); //angle to duty cycle
 
-            // Approximated for the Quickrun Fusion SE 1200KV on this car:
-            // 2S nominal battery (7.4 V), encoder drivetrain conversion,
-            // and the observed point of 500 mm/s command producing ~50 mm/s.
+            // Calibrated from measured forward encoder speeds.
+            // Reverse values are mirrored around neutral until separate
+            // backward measurements are available.
             const int speedValuesP[25] = {
                  40, 50, 60, 70, 80, 90, 100, 110, 120, 130,
                 140, 150, 160, 170, 180, 190, 200, 210, 220, 260,
@@ -121,15 +121,15 @@ namespace drivers
             };
 
             const int pwmValuesP[25] = {
-                1552, 1558, 1564, 1569, 1574, 1579, 1583, 1588, 1592, 1595,
-                1599, 1603, 1606, 1609, 1612, 1615, 1618, 1621, 1624, 1635,
-                1645, 1656, 1667, 1677, 1686
+                1543, 1556, 1558, 1560, 1562, 1564, 1566, 1568, 1571, 1573,
+                1575, 1577, 1579, 1581, 1582, 1584, 1585, 1586, 1587, 1593,
+                1598, 1603, 1608, 1613, 1618
             };
 
             const int pwmValuesN[25] = {
-                1434, 1428, 1422, 1417, 1412, 1408, 1403, 1399, 1396, 1392,
-                1388, 1385, 1382, 1379, 1375, 1372, 1370, 1367, 1364, 1354,
-                1344, 1333, 1323, 1313, 1304
+                1441, 1428, 1426, 1424, 1422, 1420, 1418, 1416, 1413, 1411,
+                1409, 1407, 1405, 1403, 1402, 1400, 1399, 1398, 1397, 1391,
+                1386, 1381, 1376, 1371, 1366
             };
 
     }; // class CSpeedingMotor
