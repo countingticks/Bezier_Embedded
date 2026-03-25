@@ -89,9 +89,9 @@ namespace drivers
             /** @brief PWM output pin */
             PwmOut m_pwm_pin;
             /** @brief 0 default */
-            uint16_t zero_default = 1491; //0.074568(7.4% duty cycle) * 20000µs(ms_period)
+            uint16_t zero_default = 1492; //0.074568(7.4% duty cycle) * 20000us(ms_period)
             /** @brief 0 default */
-            uint8_t ms_period = 20; // 20000µs
+            uint8_t ms_period = 20; // 20000us
             
             /** @brief Inferior limit */
             const int m_inf_limit;
@@ -105,7 +105,8 @@ namespace drivers
 
             int computePWMPolynomial(int speed); //angle to duty cycle
 
-            // Scaled predefined values for speeding reference and interpolation
+            // Approximated for the Quickrun Fusion SE 1200KV on this car:
+            // 2S nominal battery (7.4 V) and encoder drivetrain conversion.
             const int speedValuesP[25] = {
                  40, 50, 60, 70, 80, 90, 100, 110, 120, 130,
                 140, 150, 160, 170, 180, 190, 200, 210, 220, 260,
@@ -119,15 +120,15 @@ namespace drivers
             };
 
             const int pwmValuesP[25] = {
-                1576, 1579, 1582, 1584, 1587, 1590, 1593, 1594, 1594, 1597,
-                1600, 1602, 1603, 1606, 1609, 1612, 1611, 1612, 1614, 1621,
-                1635, 1638, 1643, 1653, 1661
+                1496, 1498, 1499, 1500, 1501, 1503, 1504, 1505, 1507, 1508,
+                1509, 1511, 1512, 1513, 1514, 1516, 1517, 1518, 1520, 1525,
+                1530, 1537, 1543, 1550, 1556
             };
 
             const int pwmValuesN[25] = {
-                1405, 1403, 1399, 1397, 1395, 1392, 1389, 1387, 1387, 1384,
-                1381, 1380, 1379, 1375, 1372, 1369, 1371, 1369, 1367, 1361,
-                1347, 1344, 1339, 1329, 1321
+                1486, 1485, 1483, 1482, 1481, 1480, 1478, 1477, 1476, 1475,
+                1473, 1472, 1471, 1470, 1468, 1467, 1466, 1465, 1463, 1458,
+                1453, 1447, 1441, 1434, 1428
             };
 
     }; // class CSpeedingMotor
