@@ -74,7 +74,6 @@ namespace drivers{
     void CSpeedingMotor::setSpeed(int f_speed)
     {
         pwm_value = zero_default;
-        m_encoder.setSpeedReference(static_cast<float>(f_speed));
 
         if (f_speed != 0) {
             if (calibrated == 1)
@@ -107,7 +106,6 @@ namespace drivers{
      */
     void CSpeedingMotor::setBrake()
     {
-        m_encoder.setSpeedReference(0.0f);
         m_pwm_pin.pulsewidth_us(zero_default);
     };
 

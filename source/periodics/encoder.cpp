@@ -36,14 +36,42 @@
 #include <cstring>
 
 #define PI_FLOAT 3.14159265358979323846
-#define SPEED_GATE_RATIO 0.15f // reference filter
-#define MIN_REFERENCE_FOR_RATIO_GATE 1.0f // reference filter
-#define DEGREE_PER_MM -14.5f // not used
 #define WHEEL_DIAMETER 67.0f
-#define SPEED_FILTER_CUTOFF_HZ 30.0f
-#define ACCELERATION_FILTER_ALPHA 0.2f
 #define MIN_HAMPEL_THRESHOLD 0.5f
 #define HAMPEL_K 3.0f
+
+namespace
+{
+    constexpr uint8_t c_statusMagnetDetectedMask = 1U << 5;
+    constexpr uint8_t c_statusMagnetTooWeakMask = 1U << 4;
+    constexpr uint8_t c_statusMagnetTooStrongMask = 1U << 3;
+    constexpr uint16_t c_confClearHysteresisAndPowerModeMask = 0xFFF0U;
+
+    bool readRegisters(I2C& f_i2c, int f_address, char f_register, char* f_data, int f_length)
+    {
+        char l_register = f_register;
+        if (0 != f_i2c.write(f_address, &l_register, 1, true))
+        {
+            return false;
+        }
+
+        return 0 == f_i2c.read(f_address, f_data, f_length, false);
+    }
+
+    bool writeRegisters(I2C& f_i2c, int f_address, char f_register, const char* f_data, int f_length)
+    {
+        char l_buffer[3] = {0, 0, 0};
+
+        if ((f_length <= 0) || (f_length > 2))
+        {
+            return false;
+        }
+
+        l_buffer[0] = f_register;
+        std::memcpy(&l_buffer[1], f_data, static_cast<size_t>(f_length));
+        return 0 == f_i2c.write(f_address, l_buffer, f_length + 1, false);
+    }
+}
 
 namespace periodics
 {
@@ -90,31 +118,6 @@ namespace periodics
         p11 = l_p11;
     }
 
-    CEncoder::CBiquad::CBiquad()
-        : b0(0.0f)
-        , b1(0.0f)
-        , b2(0.0f)
-        , a1(0.0f)
-        , a2(0.0f)
-        , z1(0.0f)
-        , z2(0.0f)
-    {
-    }
-
-    float CEncoder::CBiquad::process(float f_input)
-    {
-        const float l_output = b0 * f_input + b1 * z1 + b2 * z2 - a1 * z1 - a2 * z2;
-        z2 = z1;
-        z1 = l_output;
-        return l_output;
-    }
-
-    void CEncoder::CBiquad::reset()
-    {
-        z1 = 0.0f;
-        z2 = 0.0f;
-    }
-
     CEncoder::CEncoder(
             std::chrono::milliseconds f_period,
             UnbufferedSerial& f_serial,
@@ -125,12 +128,15 @@ namespace periodics
         , m_i2c(f_sdaPin, f_sclPin)
         , m_serial(f_serial)
         , m_isActive(false)
-        , m_speedReference(0.0f)
-        , m_speedReferenceHistory{0.0f, 0.0f, 0.0f, 0.0f, 0.0f}
         , m_lastAngularSpeed(0.0f)
-        , m_lastAngularAcceleration(0.0f)
         , m_lastLinearSpeed(0.0f)
-        , m_lastLinearAcceleration(0.0f)
+        , m_sensorConfigured(false)
+        , m_magnetDetected(false)
+        , m_magnetTooWeak(false)
+        , m_magnetTooStrong(false)
+        , m_lastAgc(0U)
+        , m_lastMagnitude(0U)
+        , m_diagnosticRefreshCounter(0U)
         , m_previousRawAngle(0.0f)
         , m_lastRawAngleDegrees(0.0f)
         , m_unwrapRevolutions(0)
@@ -143,37 +149,12 @@ namespace periodics
         , m_hampelBuffer{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}
         , m_hampelIndex(0U)
         , m_hampelCount(0U)
-        , m_samplingFrequency(0.0f)
-        , m_angleHysteresis(1.0f)
         , m_speedHysteresis(10.0f)
-        , m_lastAngle(0.0f)
         , m_reportInterval(0.02f)
         , m_timer()
         , m_kalman()
-        , m_sinFilter()
-        , m_cosFilter()
     {
         m_i2c.frequency(400000);
-
-        const float l_dt = static_cast<float>(f_period.count()) / 1000.0f;
-        const float l_cutoffHz = SPEED_FILTER_CUTOFF_HZ;
-        const float l_k = tanf(PI_FLOAT * l_cutoffHz / (1.0f / l_dt));
-        const float l_kSquared = l_k * l_k;
-        const float l_norm = 1.0f + sqrtf(2.0f) * l_k + l_kSquared;
-
-        m_samplingFrequency = 1.0f / l_dt;
-
-        m_sinFilter.b0 = l_kSquared / l_norm;
-        m_sinFilter.b1 = 2.0f * l_kSquared / l_norm;
-        m_sinFilter.b2 = l_kSquared / l_norm;
-        m_sinFilter.a1 = 2.0f * (l_kSquared - 1.0f) / l_norm;
-        m_sinFilter.a2 = (1.0f - sqrtf(2.0f) * l_k + l_kSquared) / l_norm;
-
-        m_cosFilter.b0 = m_sinFilter.b0;
-        m_cosFilter.b1 = m_sinFilter.b1;
-        m_cosFilter.b2 = m_sinFilter.b2;
-        m_cosFilter.a1 = m_sinFilter.a1;
-        m_cosFilter.a2 = m_sinFilter.a2;
     }
 
     CEncoder::~CEncoder()
@@ -182,6 +163,22 @@ namespace periodics
 
     void CEncoder::serialCallbackENCODERcommand(char const * a, char * b)
     {
+        if (0 == strncmp(a, "diag", 4))
+        {
+            snprintf(
+                b,
+                64,
+                "md=%u ml=%u mh=%u agc=%u mag=%u raw=%u",
+                m_magnetDetected ? 1U : 0U,
+                m_magnetTooWeak ? 1U : 0U,
+                m_magnetTooStrong ? 1U : 0U,
+                static_cast<unsigned int>(m_lastAgc),
+                static_cast<unsigned int>(m_lastMagnitude),
+                static_cast<unsigned int>(roundf(m_lastRawAngleDegrees))
+            );
+            return;
+        }
+
         uint8_t l_isActivate = 0;
         const uint8_t l_res = sscanf(a, "%hhu", &l_isActivate);
 
@@ -196,55 +193,99 @@ namespace periodics
         }
     }
 
-    void CEncoder::setSpeedReference(float f_speed)
+    bool CEncoder::ensureSensorConfigured()
     {
-        for (size_t i = 0U; i < c_speedReferenceHistorySize - 1U; ++i)
+        if (m_sensorConfigured)
         {
-            m_speedReferenceHistory[i] = m_speedReferenceHistory[i + 1U];
+            return true;
         }
 
-        m_speedReference = f_speed;
-        m_speedReferenceHistory[c_speedReferenceHistorySize - 1U] = f_speed;
+        char l_data[2] = {0, 0};
+        if (!readRegisters(m_i2c, c_as5600Address, c_confHighRegister, l_data, 2))
+        {
+            return false;
+        }
+
+        const uint16_t l_conf = (static_cast<uint16_t>(static_cast<uint8_t>(l_data[0])) << 8)
+                              | static_cast<uint8_t>(l_data[1]);
+        const uint16_t l_updatedConf = l_conf & c_confClearHysteresisAndPowerModeMask;
+
+        if (l_updatedConf != l_conf)
+        {
+            const char l_writeData[2] = {
+                static_cast<char>((l_updatedConf >> 8) & 0xFFU),
+                static_cast<char>(l_updatedConf & 0xFFU)
+            };
+
+            if (!writeRegisters(m_i2c, c_as5600Address, c_confHighRegister, l_writeData, 2))
+            {
+                return false;
+            }
+        }
+
+        m_sensorConfigured = true;
+        return true;
+    }
+
+    void CEncoder::refreshDiagnostics()
+    {
+        char l_agcData[1] = {0};
+        if (readRegisters(m_i2c, c_as5600Address, c_agcRegister, l_agcData, 1))
+        {
+            m_lastAgc = static_cast<uint8_t>(l_agcData[0]);
+        }
+
+        char l_magnitudeData[2] = {0, 0};
+        if (readRegisters(m_i2c, c_as5600Address, c_magnitudeHighRegister, l_magnitudeData, 2))
+        {
+            m_lastMagnitude = ((static_cast<uint16_t>(static_cast<uint8_t>(l_magnitudeData[0])) & 0x0FU) << 8)
+                            | static_cast<uint8_t>(l_magnitudeData[1]);
+        }
+    }
+
+    bool CEncoder::readRawAngleDegrees(float& f_angleDegrees)
+    {
+        (void)ensureSensorConfigured();
+
+        char l_data[3] = {0, 0, 0};
+        if (!readRegisters(m_i2c, c_as5600Address, c_statusRegister, l_data, 3))
+        {
+            return false;
+        }
+
+        const uint8_t l_status = static_cast<uint8_t>(l_data[0]);
+        m_magnetDetected = (l_status & c_statusMagnetDetectedMask) != 0U;
+        m_magnetTooWeak = (l_status & c_statusMagnetTooWeakMask) != 0U;
+        m_magnetTooStrong = (l_status & c_statusMagnetTooStrongMask) != 0U;
+
+        if (m_diagnosticRefreshCounter == 0U)
+        {
+            refreshDiagnostics();
+            m_diagnosticRefreshCounter = c_diagnosticRefreshDivider;
+        }
+        else
+        {
+            --m_diagnosticRefreshCounter;
+        }
+
+        if (!m_magnetDetected)
+        {
+            return false;
+        }
+
+        const uint16_t l_rawAngle = ((static_cast<uint16_t>(static_cast<uint8_t>(l_data[1])) & 0x0FU) << 8)
+                                  | static_cast<uint8_t>(l_data[2]);
+
+        f_angleDegrees = static_cast<float>(l_rawAngle) * 360.0f / 4096.0f;
+        m_lastRawAngleDegrees = f_angleDegrees;
+        return true;
     }
 
     float CEncoder::getRawAngleDegrees()
     {
-        char l_register = c_rawAngleHighRegister;
-        char l_data[2] = {0, 0};
-
-        if (0 != m_i2c.write(c_as5600Address, &l_register, 1, true))
-        {
-            return m_lastRawAngleDegrees;
-        }
-
-        if (0 != m_i2c.read(c_as5600Address, l_data, 2, false))
-        {
-            return m_lastRawAngleDegrees;
-        }
-
-        const uint16_t l_rawAngle = ((static_cast<uint8_t>(l_data[0]) & 0x0F) << 8)
-                                  | static_cast<uint8_t>(l_data[1]);
-
-        m_lastRawAngleDegrees = static_cast<float>(l_rawAngle) * 360.0f / 4096.0f;
-        return m_lastRawAngleDegrees;
-    }
-
-    float CEncoder::readAngleDegrees()
-    {
-        const float l_rawAngleDegrees = getRawAngleDegrees();
-        const float l_rawAngleRadians = l_rawAngleDegrees * PI_FLOAT / 180.0f;
-        const float l_sin = sinf(l_rawAngleRadians);
-        const float l_cos = cosf(l_rawAngleRadians);
-        const float l_filteredSin = m_sinFilter.process(l_sin);
-        const float l_filteredCos = m_cosFilter.process(l_cos);
-
-        float l_angle = atan2f(l_filteredSin, l_filteredCos) * 180.0f / PI_FLOAT;
-        if (l_angle < 0.0f)
-        {
-            l_angle += 360.0f;
-        }
-
-        return applyHysteresis(l_angle);
+        float l_rawAngleDegrees = m_lastRawAngleDegrees;
+        (void)readRawAngleDegrees(l_rawAngleDegrees);
+        return l_rawAngleDegrees;
     }
 
     float CEncoder::readAngularSpeed()
@@ -255,16 +296,6 @@ namespace periodics
         }
 
         return m_lastAngularSpeed;
-    }
-
-    float CEncoder::readAngularAcceleration()
-    {
-        if (!m_timerStarted)
-        {
-            (void)readAngularSpeedKalman();
-        }
-
-        return m_lastAngularAcceleration;
     }
 
     float CEncoder::getTotalDisplacementDegrees()
@@ -319,16 +350,6 @@ namespace periodics
         return m_lastLinearSpeed;
     }
 
-    float CEncoder::getLinearAcceleration()
-    {
-        if (!m_timerStarted)
-        {
-            (void)readAngularSpeedKalman();
-        }
-
-        return m_lastLinearAcceleration;
-    }
-
     float CEncoder::readAngularSpeedKalman()
     {
         if (!m_timerStarted)
@@ -343,7 +364,9 @@ namespace periodics
         if (m_lastTimerUs == 0)
         {
             m_lastTimerUs = l_nowUs;
-            m_previousRawAngle = getRawAngleDegrees();
+            float l_initialRawAngle = m_lastRawAngleDegrees;
+            (void)readRawAngleDegrees(l_initialRawAngle);
+            m_previousRawAngle = l_initialRawAngle;
             return 0.0f;
         }
 
@@ -355,7 +378,14 @@ namespace periodics
             return m_lastAngularSpeed;
         }
 
-        const float l_rawAngleDegrees = getRawAngleDegrees();
+        float l_rawAngleDegrees = m_lastRawAngleDegrees;
+        const bool l_hasMeasurement = readRawAngleDegrees(l_rawAngleDegrees);
+        if (!l_hasMeasurement)
+        {
+            m_publishAccumulator += l_dt;
+            return m_lastAngularSpeed;
+        }
+
         const float l_wrapDiff = l_rawAngleDegrees - m_previousRawAngle;
 
         if (l_wrapDiff > 180.0f)
@@ -374,22 +404,11 @@ namespace periodics
         m_kalman.predict(l_dt);
         m_kalman.update(l_measurementAngle);
 
-        const float l_previousAngularSpeed = m_lastAngularSpeed;
         float l_speedDegPerSec = applyHampel(m_kalman.speed);
         l_speedDegPerSec = applySpeedHysteresis(l_speedDegPerSec);
 
-        const float l_rawAcceleration = (l_speedDegPerSec - l_previousAngularSpeed) / l_dt;
-        m_lastAngularAcceleration = ACCELERATION_FILTER_ALPHA * l_rawAcceleration
-                                  + (1.0f - ACCELERATION_FILTER_ALPHA) * m_lastAngularAcceleration;
         m_lastAngularSpeed = l_speedDegPerSec;
-
-        // Keep the raw measured encoder speed visible while the car calibration is still in progress.
-        // m_lastLinearSpeed = applyReferenceFilter(l_speedDegPerSec / DEGREE_PER_MM);
         m_lastLinearSpeed = convertAngularToLinear(l_speedDegPerSec);
-        m_lastLinearAcceleration = convertAngularToLinear(l_rawAcceleration);
-
-        // m_lastLinearSpeed = l_speedDegPerSec / DEGREE_PER_MM;
-        // m_lastLinearAcceleration = m_lastAngularAcceleration / DEGREE_PER_MM;
 
         m_publishAccumulator += l_dt;
 
@@ -440,24 +459,6 @@ namespace periodics
         return f_newSample;
     }
 
-    float CEncoder::applyHysteresis(float f_angle)
-    {
-        if (f_angle > m_lastAngle + m_angleHysteresis)
-        {
-            m_lastAngle = f_angle;
-        }
-        else if (f_angle < m_lastAngle - m_angleHysteresis)
-        {
-            m_lastAngle = f_angle;
-        }
-        else
-        {
-            f_angle = m_lastAngle;
-        }
-
-        return m_lastAngle = f_angle;
-    }
-
     float CEncoder::applySpeedHysteresis(float f_speed)
     {
         if (f_speed > m_lastAngularSpeed + m_speedHysteresis)
@@ -474,33 +475,6 @@ namespace periodics
         }
 
         return m_lastAngularSpeed = f_speed;
-    }
-
-    float CEncoder::applyReferenceFilter(float f_speedMmPerSec) const
-    {
-        const float l_referenceMagnitude = fabsf(m_speedReference);
-        if (l_referenceMagnitude < MIN_REFERENCE_FOR_RATIO_GATE)
-        {
-            return f_speedMmPerSec;
-        }
-
-        float l_minDifference = fabsf(f_speedMmPerSec - m_speedReferenceHistory[0]);
-
-        for (size_t i = 1U; i < c_speedReferenceHistorySize; ++i)
-        {
-            const float l_difference = fabsf(f_speedMmPerSec - m_speedReferenceHistory[i]);
-            if (l_difference < l_minDifference)
-            {
-                l_minDifference = l_difference;
-            }
-        }
-
-        if ((l_minDifference / l_referenceMagnitude) > SPEED_GATE_RATIO)
-        {
-            return m_speedReference;
-        }
-
-        return f_speedMmPerSec;
     }
 
     float CEncoder::convertAngularToLinear(float f_angularQuantity) const

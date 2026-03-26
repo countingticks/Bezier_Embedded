@@ -38,6 +38,7 @@
 #include <utils/task.hpp>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 
 namespace periodics
 {
@@ -75,48 +76,29 @@ namespace periodics
 
             /* Serial callback implementation */
             void serialCallbackENCODERcommand(char const * a, char * b);
-            /* Update the expected linear speed reference in mm/s */
-            void setSpeedReference(float f_speed);
 
-            float readAngleDegrees();
             float readAngularSpeed();
-            float readAngularAcceleration();
             float getTotalDisplacementDegrees();
             void resetTravelDistance();
             float getTravelDistanceMm();
             float getLinearSpeed();
-            float getLinearAcceleration();
 
         private:
             /* Run method */
             virtual void _run();
 
+            bool ensureSensorConfigured();
+            bool readRawAngleDegrees(float& f_angleDegrees);
+            void refreshDiagnostics();
             float readAngularSpeedKalman();
             float getRawAngleDegrees();
             float applyHampel(float f_newSample);
-            float applyHysteresis(float f_angle);
             float applySpeedHysteresis(float f_speed);
-            float applyReferenceFilter(float f_speedMmPerSec) const;
             float convertAngularToLinear(float f_angularQuantity) const;
             void publishSpeed();
 
-            struct CBiquad
-            {
-                float b0;
-                float b1;
-                float b2;
-                float a1;
-                float a2;
-                float z1;
-                float z2;
-
-                CBiquad();
-                float process(float f_input);
-                void reset();
-            };
-
             static constexpr size_t c_hampelWindow = 7;
-            static constexpr size_t c_speedReferenceHistorySize = 5;
+            static constexpr size_t c_diagnosticRefreshDivider = 25;
 
             /* AS5600 encoder on I2C */
             I2C m_i2c;
@@ -124,18 +106,20 @@ namespace periodics
             UnbufferedSerial& m_serial;
             /* @brief Active flag  */
             bool m_isActive;
-            /* @brief Expected speed command in mm/s */
-            float m_speedReference;
-            /* @brief Recent speed commands used by the reference gate */
-            float m_speedReferenceHistory[c_speedReferenceHistorySize];
             /* @brief Last published angular speed in deg/s */
             float m_lastAngularSpeed;
-            /* @brief Last published angular acceleration in deg/s² */
-            float m_lastAngularAcceleration;
             /* @brief Last published linear speed in mm/s */
             float m_lastLinearSpeed;
-            /* @brief Last published linear acceleration in mm/s² */
-            float m_lastLinearAcceleration;
+            /* @brief True after the AS5600 volatile setup has been refreshed */
+            bool m_sensorConfigured;
+            /* @brief Latest AS5600 magnetic status bits */
+            bool m_magnetDetected;
+            bool m_magnetTooWeak;
+            bool m_magnetTooStrong;
+            /* @brief Latest AS5600 field diagnostics */
+            uint8_t m_lastAgc;
+            uint16_t m_lastMagnitude;
+            size_t m_diagnosticRefreshCounter;
             /* @brief Last raw encoder angle for unwrap */
             float m_previousRawAngle;
             /* @brief Last valid raw angle measurement in degrees */
@@ -159,19 +143,17 @@ namespace periodics
             size_t m_hampelIndex;
             size_t m_hampelCount;
 
-            float m_samplingFrequency;
-            float m_angleHysteresis;
             float m_speedHysteresis;
-            float m_lastAngle;
             float m_reportInterval;
 
             Timer m_timer;
             CEncoderKalman2D m_kalman;
-            CBiquad m_sinFilter;
-            CBiquad m_cosFilter;
 
             static constexpr int c_as5600Address = 0x36 << 1;
-            static constexpr char c_rawAngleHighRegister = 0x0C;
+            static constexpr char c_confHighRegister = 0x07;
+            static constexpr char c_statusRegister = 0x0B;
+            static constexpr char c_agcRegister = 0x1A;
+            static constexpr char c_magnitudeHighRegister = 0x1B;
     }; // class CEncoder
 }; // namespace periodics
 
