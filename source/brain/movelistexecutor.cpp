@@ -24,15 +24,21 @@ namespace
     static const float START_HEADING_RAD = PI_FLOAT * 0.5f;
     static const float MIN_CONTROLLER_DT_S = 0.001f;
 
-    static const float SPEED_KP = 0.42f;            // mm/s per mm
-    static const float SPEED_KI = 0.05f;            // mm/s per (mm*s)
-    static const float SPEED_KD = 0.02f;            // mm/s per (mm/s)
+    static const float SPEED_KP = 2.0f;            // mm/s per mm
+    static const float SPEED_KI = 0.5f;            // mm/s per (mm*s)
+    static const float SPEED_KD = 0.05f;            // mm/s per (mm/s)
+    // static const float SPEED_KP = 0.42f;            // mm/s per mm
+    // static const float SPEED_KI = 0.15f;            // mm/s per (mm*s)
+    // static const float SPEED_KD = 0.02f;            // mm/s per (mm/s)
     static const float SPEED_INTEGRAL_LIMIT = 1800.0f;
     static const float SPEED_FEEDBACK_LIMIT = 180.0f;
 
-    static const float STEER_LATERAL_KP = 0.24f;    // deci-deg per mm
-    static const float STEER_LATERAL_KI = 0.0f;
-    static const float STEER_LATERAL_KD = 0.08f;    // deci-deg per (mm/s)
+    static const float STEER_LATERAL_KP = 5.0f;    // deci-deg per mm
+    static const float STEER_LATERAL_KI = 0.85f;
+    static const float STEER_LATERAL_KD = 0.1f;    // deci-deg per (mm/s)
+    // static const float STEER_LATERAL_KP = 0.24f;    // deci-deg per mm
+    // static const float STEER_LATERAL_KI = 0.0f;
+    // static const float STEER_LATERAL_KD = 0.08f;    // deci-deg per (mm/s)
     static const float STEER_LATERAL_INTEGRAL_LIMIT = 250.0f;
     static const float STEER_HEADING_K = 420.0f;    // deci-deg per rad
     static const float STEER_FEEDBACK_LIMIT = 110.0f;
