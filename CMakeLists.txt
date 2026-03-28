@@ -3,6 +3,11 @@
 
 cmake_minimum_required(VERSION 3.19.0)
 
+# Must be set before project() so CMake 4.x doesn't inject Windows-specific
+# linker flags (--major-image-version, -lkernel32, etc.) during compiler tests
+set(CMAKE_SYSTEM_NAME Generic)
+set(CMAKE_CROSSCOMPILING TRUE)
+
 set(MBED_PATH ${CMAKE_CURRENT_SOURCE_DIR}/mbed-os CACHE INTERNAL "")
 set(MBED_CONFIG_PATH ${CMAKE_CURRENT_BINARY_DIR} CACHE INTERNAL "")
 set(APP_TARGET robot_car)
