@@ -91,9 +91,9 @@ namespace brain
             /* State machine state */
             uint8_t                       m_state;
 
-            uint16_t m_ticksRun;
+            uint32_t m_ticksRun;
 
-            uint16_t m_targetTime;
+            uint32_t m_targetTime;
 
             uint16_t m_period;
 
@@ -106,3 +106,4 @@ namespace brain
 }; // namespace brain
 
 #endif // ROBOT_STATE_MACHINE_HPP 
+

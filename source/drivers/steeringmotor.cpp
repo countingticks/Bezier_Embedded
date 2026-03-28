@@ -1,7 +1,7 @@
 /**
  * Copyright (c) 2019, Bosch Engineering Center Cluj and BFMC organizers
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
 
@@ -32,31 +32,31 @@
 
 #define scaling_factor_1 10
 #define scaling_factor_2 100
-#define calibrated 0
-#define calib_sup_limit 0
-#define calib_inf_limit 0
+#define calibrated 1
+#define calib_sup_limit 219
+#define calib_inf_limit -232
 
 namespace drivers{
     /**
      * @brief It initializes the pwm parameters and it sets the steering in zero position, the limits of the input degree value.
-     * 
+     *
      * @param f_pwm               pin connected to servo motor
-     * @param f_inf_limit         inferior limit 
+     * @param f_inf_limit         inferior limit
      * @param f_sup_limit         superior limit
-     * 
+     *
      */
     CSteeringMotor::CSteeringMotor(
-            PinName f_pwm_pin, 
-            int f_inf_limit, 
+            PinName f_pwm_pin,
+            int f_inf_limit,
             int f_sup_limit
         )
         :m_pwm_pin(f_pwm_pin)
         ,m_inf_limit(f_inf_limit)
         ,m_sup_limit(f_sup_limit)
     {
-        // Wait for Nucleo startup stabilization to prevent erratic motor 
+        // Wait for Nucleo startup stabilization to prevent erratic motor
         // behavior caused by power-on reset cycles affecting PWM signals
-        // potentially resulting in chaotic left/right motor oscillations. 
+        // potentially resulting in chaotic left/right motor oscillations.
         ThisThread::sleep_for(chrono::milliseconds(11000));
 
         m_pwm_pin.pulsewidth_us(zero_default);
@@ -68,7 +68,7 @@ namespace drivers{
     CSteeringMotor::~CSteeringMotor()
     {
     };
-    
+
     /**
     * @brief Interpolates values based on steering input.
     *
@@ -118,13 +118,13 @@ namespace drivers{
                 return (int16_t)(interpFixed / SCALE);
             }
         }
-        
+
         return pwmValuesP[0];
     }
 
-    /** @brief  It modifies the angle of the servo motor, which controls the steering wheels. 
+    /** @brief  It modifies the angle of the servo motor, which controls the steering wheels.
      *
-     *  @param f_angle      angle degree, where the positive value means right direction and negative value the left direction. 
+     *  @param f_angle      angle degree, where the positive value means right direction and negative value the left direction.
      */
     void CSteeringMotor::setAngle(int f_angle)
     {
@@ -139,11 +139,11 @@ namespace drivers{
         }
 
         m_pwm_pin.pulsewidth_us(pwm_value);
-        
+
     };
 
-    /** @brief  It converts angle degree to duty cycle for pwm signal. 
-     * 
+    /** @brief  It converts angle degree to duty cycle for pwm signal.
+     *
      *  @param f_angle    angle degree
      *  \return     new `pwm_value`
      */
@@ -152,14 +152,59 @@ namespace drivers{
         int64_t y=zero_default;
         // POLYNOMIAL CODE START
 
+        // Cubic spline evaluation with 13 segments
+        static const int64_t knots[14] = {-272, -247, -233, -199, -148, -101, -50, 0, 46, 95, 148, 196, 219, 272};
+        static const int64_t coeffs[13][4] = { 
+            {-3794LL, 332464LL, 0LL, 542760903LL},
+            {-119046LL, 2338033LL, 9467739LL, 687341568LL},
+            {2325LL, -166462LL, 6303118LL, 950009856LL},
+            {13LL, -5141LL, 3095151LL, 1064304640LL},
+            {4LL, -3720LL, 2671071LL, 1211105280LL},
+            {51LL, -5422LL, 2348888LL, 1327497216LL},
+            {0LL, -173LL, 2196701LL, 1439694848LL},
+            {-30LL, 1204LL, 2177063LL, 1550843904LL},
+            {159LL, -9239LL, 2091130LL, 1652555776LL},
+            {-125LL, 14738LL, 2326526LL, 1751121920LL},
+            {1175LL, -54656LL, 2840064LL, 1896873984LL},
+            {-55985LL, 2030789LL, 5720472LL, 2037383168LL},
+            {-886LL, -39736LL, 11573109LL, 2558175915LL}
+        };
+        
+        // Find the correct segment
+        int segment = -1;
+        for (int i = 0; i < 13; i++) {
+            if (steering >= knots[i] && steering <= knots[i + 1]) {
+                segment = i;
+                break;
+            }
+        }
+        
+        // Fall back to the boundary segment if the knot search did not find an exact match
+        if (segment == -1) {
+            if (steering < knots[0]) segment = 0;
+            else segment = 13 - 1;
+        }
+        
+        // Evaluate cubic polynomial for this segment: a*(x-xi)^3 + b*(x-xi)^2 + c*(x-xi) + d
+        int64_t dx = steering - knots[segment];
+        int64_t dx2 = dx * dx;
+        int64_t dx3 = dx2 * dx;
+        
+        y = (coeffs[segment][0] * dx3 + coeffs[segment][1] * dx2 + 
+             coeffs[segment][2] * dx + coeffs[segment][3]) / 1048576LL;
+        
+        /* Cubic spline interpolation with 13 segments
+         * Each segment is defined by: a*(x-xi)^3 + b*(x-xi)^2 + c*(x-xi) + d
+         * Coefficients are scaled by 1048576 for integer arithmetic
+         */
         // POLYNOMIAL CODE END
         return (int)y;
     }
 
     /**
      * @brief It verifies whether a number is in a given range
-     * 
-     * @param f_angle value 
+     *
+     * @param f_angle value
      * @return inf_limit, if the value is lower than the range's low
      * @return sup_limit, if the value is higher than the range's high
     */

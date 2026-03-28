@@ -1,20 +1,32 @@
 /**
  * @brief Move List Executor implementation.
  *
- *  Lifecycle:
- *    1. Pi sends N  "#moves:speed;steer;duration;;"  messages  → segments buffered
- *    2. Pi sends    "#moveGo:1;;"                               → execution starts
- *    3. Nucleo steps through each segment, applying speed/steer for its duration
- *    4. When all segments are done → motors zeroed, "@moveDone:1;;\r\n" sent back
- *    5. Pi can abort at any time with  "#moveStop:1;;"
+ * Lifecycle:
+ *   1. Pi sends N  "#moves:speed;steer;time_ms;;" messages -> keyframes buffered
+ *   2. Pi sends    "#moveGo:1;;"                        -> execution starts
+ *   3. Nucleo interpolates speed/steer between keyframes on every task tick
+ *   4. Progress is reported periodically until "@moveDone:<elapsed_ms>;;"
+ *   5. Pi can abort at any time with "#moveStop:1;;"
  */
 
 #include <brain/movelistexecutor.hpp>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+
+namespace
+{
+    static const uint32_t FNV_OFFSET_BASIS = 2166136261u;
+    static const uint32_t FNV_PRIME = 16777619u;
+
+    static int16_t roundToInt16(double value)
+    {
+        return static_cast<int16_t>(value >= 0.0 ? value + 0.5 : value - 0.5);
+    }
+}
 
 namespace brain
 {
-
-    // ======================== CONSTRUCTOR ========================
     CMovelistexecutor::CMovelistexecutor(
             std::chrono::milliseconds   f_period,
             UnbufferedSerial&           f_serialPort,
@@ -28,8 +40,10 @@ namespace brain
         , m_moveCount(0)
         , m_executing(false)
         , m_currentMove(0)
-        , m_ticksInMove(0)
-        , m_period((uint16_t)(f_period.count()))
+        , m_elapsedMs(0)
+        , m_period(static_cast<uint32_t>(f_period.count()))
+        , m_lastProgressReportMs(0)
+        , m_uploadChecksum(FNV_OFFSET_BASIS)
     {
     }
 
@@ -37,42 +51,49 @@ namespace brain
     {
     };
 
-    // ======================== PERIODIC RUN ========================
     void CMovelistexecutor::_run()
     {
-        if (!m_executing) return;
+        if (!m_executing || m_moveCount == 0)
+        {
+            return;
+        }
 
-        m_ticksInMove += m_period;
+        const uint32_t totalTimeMs = m_moves[m_moveCount - 1].time_ms;
 
-        // Check if current segment is finished
-        if (m_ticksInMove >= m_moves[m_currentMove].duration_ms)
+        if (m_elapsedMs < totalTimeMs)
+        {
+            m_elapsedMs += m_period;
+            if (m_elapsedMs > totalTimeMs)
+            {
+                m_elapsedMs = totalTimeMs;
+            }
+        }
+
+        while (m_currentMove + 1 < m_moveCount && m_elapsedMs >= m_moves[m_currentMove + 1].time_ms)
         {
             m_currentMove++;
+        }
 
-            // All moves done?
-            if (m_currentMove >= m_moveCount)
-            {
-                m_executing = false;
-                m_speedingControl.setSpeed(0);
-                m_steeringControl.setAngle(0);
-                m_serialPort.write("@moveDone:1;;\r\n", 15);
-                return;
-            }
+        applyInterpolatedCommand(m_elapsedMs);
 
-            // Apply next segment
-            m_ticksInMove = 0;
-            m_speedingControl.setSpeed(m_moves[m_currentMove].speed);
-            m_steeringControl.setAngle(m_moves[m_currentMove].steer);
+        if ((m_elapsedMs - m_lastProgressReportMs) >= MOVE_PROGRESS_INTERVAL_MS || m_elapsedMs >= totalTimeMs)
+        {
+            sendProgressUpdate();
+            m_lastProgressReportMs = m_elapsedMs;
+        }
+
+        if (m_elapsedMs >= totalTimeMs)
+        {
+            char buffer[64];
+            snprintf(buffer, sizeof(buffer), "@moveDone:%lu;;\r\n", static_cast<unsigned long>(m_elapsedMs));
+            m_serialPort.write(buffer, strlen(buffer));
+
+            m_speedingControl.setSpeed(0);
+            m_steeringControl.setAngle(0);
+            resetExecutionState(true);
         }
     }
 
-    // ======================== SERIAL CALLBACKS ========================
-
-    /**
-     * Append one move segment.
-     * Message format: "speed;steer;duration"   (ints, semicolon-separated)
-     * Example:        "150;-80;200"   → 150 mm/s, -8.0°, 200 ms
-     */
     void CMovelistexecutor::serialCallbackMovesCommand(char const * message, char * response)
     {
         if (uint8_globalsV_value_of_kl != 30)
@@ -81,31 +102,54 @@ namespace brain
             return;
         }
 
-        int speed, steer, duration;
-        uint8_t parsed = sscanf(message, "%d;%d;%d", &speed, &steer, &duration);
+        if (m_executing)
+        {
+            sprintf(response, "busy");
+            return;
+        }
 
-        if (parsed == 3 && m_moveCount < MAX_MOVES)
-        {
-            m_moves[m_moveCount].speed       = (int16_t)speed;
-            m_moves[m_moveCount].steer        = (int16_t)steer;
-            m_moves[m_moveCount].duration_ms  = (uint16_t)duration;
-            m_moveCount++;
-            sprintf(response, "%d", m_moveCount);
-        }
-        else if (m_moveCount >= MAX_MOVES)
-        {
-            sprintf(response, "full");
-        }
-        else
+        int speed, steer;
+        unsigned long timeMs;
+        uint8_t parsed = sscanf(message, "%d;%d;%lu", &speed, &steer, &timeMs);
+
+        if (parsed != 3)
         {
             sprintf(response, "syntax error");
+            return;
         }
+
+        if (m_moveCount >= MAX_MOVES)
+        {
+            sprintf(response, "full");
+            return;
+        }
+
+        if (m_moveCount == 0)
+        {
+            if (timeMs != 0UL)
+            {
+                sprintf(response, "first time must be zero");
+                return;
+            }
+            m_uploadChecksum = FNV_OFFSET_BASIS;
+        }
+        else if (timeMs <= m_moves[m_moveCount - 1].time_ms)
+        {
+            sprintf(response, "time order");
+            return;
+        }
+
+        m_moves[m_moveCount].speed = static_cast<int16_t>(speed);
+        m_moves[m_moveCount].steer = static_cast<int16_t>(steer);
+        m_moves[m_moveCount].time_ms = static_cast<uint32_t>(timeMs);
+        m_uploadChecksum = fnv1aMix(m_uploadChecksum, static_cast<uint16_t>(m_moves[m_moveCount].speed), 2);
+        m_uploadChecksum = fnv1aMix(m_uploadChecksum, static_cast<uint16_t>(m_moves[m_moveCount].steer), 2);
+        m_uploadChecksum = fnv1aMix(m_uploadChecksum, m_moves[m_moveCount].time_ms, 4);
+        m_moveCount++;
+
+        sprintf(response, "%d", m_moveCount);
     }
 
-    /**
-     * Start executing the buffered moves.
-     * Message format: "1"
-     */
     void CMovelistexecutor::serialCallbackMoveGoCommand(char const * message, char * response)
     {
         if (uint8_globalsV_value_of_kl != 30)
@@ -120,31 +164,122 @@ namespace brain
             return;
         }
 
-        // Start from the first segment
         m_currentMove = 0;
-        m_ticksInMove = 0;
-        m_executing   = true;
+        m_elapsedMs = 0;
+        m_lastProgressReportMs = 0;
+        m_executing = true;
 
-        // Apply the first segment immediately
-        m_speedingControl.setSpeed(m_moves[0].speed);
-        m_steeringControl.setAngle(m_moves[0].steer);
+        applyInterpolatedCommand(0);
 
-        sprintf(response, "ok;%d", m_moveCount);
+        snprintf(
+            response,
+            96,
+            "ready;%u;%lu;%lu",
+            static_cast<unsigned>(m_moveCount),
+            static_cast<unsigned long>(m_moves[m_moveCount - 1].time_ms),
+            static_cast<unsigned long>(m_uploadChecksum)
+        );
+
+        char buffer[96];
+        snprintf(
+            buffer,
+            sizeof(buffer),
+            "@moveStarted:%u;%lu;%lu;;\r\n",
+            static_cast<unsigned>(m_moveCount),
+            0UL,
+            static_cast<unsigned long>(m_moves[m_moveCount - 1].time_ms)
+        );
+        m_serialPort.write(buffer, strlen(buffer));
     }
 
-    /**
-     * Stop execution immediately and zero the motors.
-     * Message format: "1"
-     */
     void CMovelistexecutor::serialCallbackMoveStopCommand(char const * message, char * response)
     {
-        m_executing = false;
-        m_moveCount = 0;
-        m_currentMove = 0;
-        m_ticksInMove = 0;
+        const uint32_t elapsedMs = m_elapsedMs;
         m_speedingControl.setSpeed(0);
         m_steeringControl.setAngle(0);
-        sprintf(response, "stopped");
+        resetExecutionState(true);
+        snprintf(response, 48, "stopped;%lu", static_cast<unsigned long>(elapsedMs));
+    }
+
+    void CMovelistexecutor::applyInterpolatedCommand(uint32_t elapsed_ms)
+    {
+        if (m_moveCount == 0)
+        {
+            return;
+        }
+
+        if (m_moveCount == 1 || m_currentMove + 1 >= m_moveCount)
+        {
+            m_speedingControl.setSpeed(m_moves[m_moveCount - 1].speed);
+            m_steeringControl.setAngle(m_moves[m_moveCount - 1].steer);
+            return;
+        }
+
+        const MoveSegment& startFrame = m_moves[m_currentMove];
+        const MoveSegment& endFrame = m_moves[m_currentMove + 1];
+
+        if (endFrame.time_ms <= startFrame.time_ms)
+        {
+            m_speedingControl.setSpeed(endFrame.speed);
+            m_steeringControl.setAngle(endFrame.steer);
+            return;
+        }
+
+        double alpha = static_cast<double>(elapsed_ms - startFrame.time_ms) /
+                       static_cast<double>(endFrame.time_ms - startFrame.time_ms);
+        if (alpha < 0.0)
+        {
+            alpha = 0.0;
+        }
+        if (alpha > 1.0)
+        {
+            alpha = 1.0;
+        }
+
+        const double speed = static_cast<double>(startFrame.speed) +
+                             (static_cast<double>(endFrame.speed - startFrame.speed) * alpha);
+        const double steer = static_cast<double>(startFrame.steer) +
+                             (static_cast<double>(endFrame.steer - startFrame.steer) * alpha);
+
+        m_speedingControl.setSpeed(roundToInt16(speed));
+        m_steeringControl.setAngle(roundToInt16(steer));
+    }
+
+    void CMovelistexecutor::resetExecutionState(bool clearBuffer)
+    {
+        m_executing = false;
+        m_currentMove = 0;
+        m_elapsedMs = 0;
+        m_lastProgressReportMs = 0;
+        if (clearBuffer)
+        {
+            m_moveCount = 0;
+            m_uploadChecksum = FNV_OFFSET_BASIS;
+        }
+    }
+
+    void CMovelistexecutor::sendProgressUpdate()
+    {
+        char buffer[64];
+        snprintf(
+            buffer,
+            sizeof(buffer),
+            "@moveProgress:%lu;%u;;\r\n",
+            static_cast<unsigned long>(m_elapsedMs),
+            static_cast<unsigned>(m_currentMove)
+        );
+        m_serialPort.write(buffer, strlen(buffer));
+    }
+
+    uint32_t CMovelistexecutor::fnv1aMix(uint32_t checksum, uint32_t value, uint8_t byteCount)
+    {
+        for (uint8_t index = 0; index < byteCount; index++)
+        {
+            checksum ^= static_cast<uint8_t>((value >> (index * 8)) & 0xFFu);
+            checksum *= FNV_PRIME;
+        }
+        return checksum;
     }
 
 }; // namespace brain
+

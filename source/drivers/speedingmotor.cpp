@@ -1,7 +1,7 @@
 /**
  * Copyright (c) 2019, Bosch Engineering Center Cluj and BFMC organizers
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
 
@@ -31,22 +31,22 @@
 #include <drivers/speedingmotor.hpp>
 #include <periodics/encoder.hpp>
 
-#define calibrated 0
+#define calibrated 1
 #define calib_sup_limit 500
 #define calib_inf_limit -500
 
 namespace drivers{
     /**
      * @brief It initializes the pwm parameters and it sets the speed reference to zero position, and the limits of the car speed.
-     * 
+     *
      * @param f_pwm_pin               pin connected to servo motor
-     * @param f_inf_limit         inferior limit 
+     * @param f_inf_limit         inferior limit
      * @param f_sup_limit         superior limit
-     * 
+     *
      */
     CSpeedingMotor::CSpeedingMotor(
-            PinName f_pwm_pin, 
-            int f_inf_limit, 
+            PinName f_pwm_pin,
+            int f_inf_limit,
             int f_sup_limit,
             periodics::CEncoder& f_encoder
         )
@@ -56,7 +56,7 @@ namespace drivers{
         , m_encoder(f_encoder)
     {
         // Set the ms_period on the pwm_pin
-        m_pwm_pin.period_ms(ms_period); 
+        m_pwm_pin.period_ms(ms_period);
         // Set position to zero
         m_pwm_pin.pulsewidth_us(zero_default);
     };
@@ -67,9 +67,9 @@ namespace drivers{
     {
     };
 
-    /** @brief  It modifies the speed reference of the brushless motor, which controls the speed of the wheels. 
+    /** @brief  It modifies the speed reference of the brushless motor, which controls the speed of the wheels.
      *
-     *  @param f_speed      speed in mm/s, where the positive value means forward direction and negative value the backward direction. 
+     *  @param f_speed      speed in mm/s, where the positive value means forward direction and negative value the backward direction.
      */
     void CSpeedingMotor::setSpeed(int f_speed)
     {
@@ -84,12 +84,12 @@ namespace drivers{
                 pwm_value = interpolate(-f_speed, speedValuesP, speedValuesN, pwmValuesP, pwmValuesN, 25);
             }
         }
-        
+
         m_pwm_pin.pulsewidth_us(pwm_value);
     };
 
-    /** @brief  It converts speed reference to duty cycle for pwm signal. 
-     * 
+    /** @brief  It converts speed reference to duty cycle for pwm signal.
+     *
      *  @param f_speed    speed
      *  \return        new `pwm_value`
     */
@@ -98,11 +98,57 @@ namespace drivers{
         int64_t y=zero_default;
         // POLYNOMIAL CODE START
 
+        // Cubic spline evaluation with 14 segments
+        static const int64_t knots[15] = {-550, -479, -421, -296, -196, -93, -49, 0, 52, 101, 205, 301, 406, 504, 550};
+        static const int64_t coeffs[14][4] = { 
+            {0LL, 18LL, -75406LL, 1707081728LL},
+            {-3LL, 213LL, -73079LL, 1701838848LL},
+            {-1LL, -83LL, -82360LL, 1697644544LL},
+            {3LL, -701LL, -127219LL, 1685061632LL},
+            {-1LL, -47LL, -180141LL, 1668284416LL},
+            {-75LL, 2804LL, -217165LL, 1648361472LL},
+            {473LL, -45327LL, -405418LL, 1637875712LL},
+            {295LL, -13735LL, -1393872LL, 1563426816LL},
+            {-51LL, 5923LL, -421857LL, 1495269376LL},
+            {-1LL, 487LL, -209915LL, 1482686464LL},
+            {-1LL, 254LL, -148562LL, 1464860672LL},
+            {0LL, 117LL, -119395LL, 1452277760LL},
+            {-2LL, 226LL, -102442LL, 1440743424LL},
+            {2LL, -272LL, -106108LL, 1431306240LL}
+        };
+        
+        // Find the correct segment
+        int segment = -1;
+        for (int i = 0; i < 14; i++) {
+            if (speed >= knots[i] && speed <= knots[i + 1]) {
+                segment = i;
+                break;
+            }
+        }
+        
+        // Fall back to the boundary segment if the knot search did not find an exact match
+        if (segment == -1) {
+            if (speed < knots[0]) segment = 0;
+            else segment = 14 - 1;
+        }
+        
+        // Evaluate cubic polynomial for this segment: a*(x-xi)^3 + b*(x-xi)^2 + c*(x-xi) + d
+        int64_t dx = speed - knots[segment];
+        int64_t dx2 = dx * dx;
+        int64_t dx3 = dx2 * dx;
+        
+        y = (coeffs[segment][0] * dx3 + coeffs[segment][1] * dx2 + 
+             coeffs[segment][2] * dx + coeffs[segment][3]) / 1048576LL;
+        
+        /* Cubic spline interpolation with 14 segments
+         * Each segment is defined by: a*(x-xi)^3 + b*(x-xi)^2 + c*(x-xi) + d
+         * Coefficients are scaled by 1048576 for integer arithmetic
+         */
         // POLYNOMIAL CODE END
         return (int)y;
     }
 
-    /** @brief  It puts the brushless motor into brake state, 
+    /** @brief  It puts the brushless motor into brake state,
      */
     void CSpeedingMotor::setBrake()
     {
@@ -165,14 +211,14 @@ namespace drivers{
                 return (int16_t)(interpFixed / SCALE);
             }
         }
-        
+
         return zero_default;
     }
 
     /**
      * @brief It verifies whether a number is in a given range
-     * 
-     * @param f_speed value 
+     *
+     * @param f_speed value
      * @return inf_limit, if the value is lower than the range's low
      * @return sup_limit, if the value is higher than the range's high
     */

@@ -1,6 +1,6 @@
 /**
- * @brief Move List Executor - receives a batch of move segments from the Pi
- *        and executes them sequentially on the car's motors.
+ * @brief Move List Executor - receives adaptive keyframes from the Pi and
+ *        executes them with time-based interpolation.
  */
 
 #ifndef MOVELISTEXECUTOR_HPP
@@ -15,26 +15,21 @@
 
 namespace brain
 {
-    /** @brief A single move segment: speed + steer held for a duration. */
+    /** @brief A single keyframe: target speed/steer reached at absolute time_ms. */
     struct MoveSegment
     {
-        int16_t  speed;       // mm/s
-        int16_t  steer;       // degrees * 10
-        uint16_t duration_ms; // how long to hold (ms)
+        int16_t  speed;   // mm/s
+        int16_t  steer;   // degrees * 10
+        uint32_t time_ms; // absolute time since moveGo start
     };
 
-    /** Max number of move segments that can be queued. */
-    static const uint8_t MAX_MOVES = 100;
+    /** Max number of adaptive keyframes that can be queued. */
+    static const uint16_t MAX_MOVES = 512;
+    static const uint32_t MOVE_PROGRESS_INTERVAL_MS = 50;
 
-    /**
-     * @brief CMovelistexecutor stores an array of MoveSegments received over
-     *        serial and executes them one-by-one, advancing when each segment's
-     *        duration expires.
-     */
     class CMovelistexecutor : public utils::CTask
     {
         public:
-            /* Constructor */
             CMovelistexecutor(
                 std::chrono::milliseconds   f_period,
                 UnbufferedSerial&           f_serialPort,
@@ -42,38 +37,39 @@ namespace brain
                 drivers::ISpeedingCommand&  f_speedingControl
             );
 
-            /* Destructor */
             ~CMovelistexecutor();
 
-            /** Serial callback: append a move segment.  Format: "speed;steer;duration;;" */
+            /** Serial callback: append one absolute-time keyframe. */
             void serialCallbackMovesCommand(char const * message, char * response);
 
-            /** Serial callback: start executing the queued moves.  Format: "1;;" */
+            /** Serial callback: arm execution of the queued keyframes. */
             void serialCallbackMoveGoCommand(char const * message, char * response);
 
-            /** Serial callback: abort execution immediately.  Format: "1;;" */
+            /** Serial callback: abort execution immediately and clear the queue. */
             void serialCallbackMoveStopCommand(char const * message, char * response);
 
         private:
-            /* Periodic run method */
             virtual void _run();
+            void applyInterpolatedCommand(uint32_t elapsed_ms);
+            void resetExecutionState(bool clearBuffer);
+            void sendProgressUpdate();
+            static uint32_t fnv1aMix(uint32_t checksum, uint32_t value, uint8_t byteCount);
 
-            /* References */
             UnbufferedSerial&           m_serialPort;
             drivers::ISteeringCommand&  m_steeringControl;
             drivers::ISpeedingCommand&  m_speedingControl;
 
-            /* Move buffer */
             MoveSegment m_moves[MAX_MOVES];
-            uint8_t     m_moveCount;
+            uint16_t    m_moveCount;
 
-            /* Execution state */
             bool     m_executing;
-            uint8_t  m_currentMove;
-            uint16_t m_ticksInMove;   // ms elapsed in current segment
-            uint16_t m_period;        // task period in ms
-
-    }; // class CMovelistexecutor
-}; // namespace brain
+            uint16_t m_currentMove;
+            uint32_t m_elapsedMs;
+            uint32_t m_period;
+            uint32_t m_lastProgressReportMs;
+            uint32_t m_uploadChecksum;
+    };
+};
 
 #endif // MOVELISTEXECUTOR_HPP
+
