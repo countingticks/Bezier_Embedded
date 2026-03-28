@@ -65,6 +65,8 @@ namespace periodics{
         , m_velocityZ(0)
         , m_velocityStationaryCounter(0)
         , m_delta_time(f_period.count())
+        , m_lastYawDegrees(0.0f)
+        , m_hasValidYaw(false)
     {
         if(m_delta_time < 150){
             setNewPeriod(150);
@@ -224,6 +226,16 @@ namespace periodics{
         }else{
             sprintf(b,"syntax error");
         }
+    }
+
+    float CImu::getYawDegrees() const
+    {
+        return m_lastYawDegrees;
+    }
+
+    bool CImu::hasValidYaw() const
+    {
+        return m_hasValidYaw;
     }
 
     /* This API is an example for reading sensor data
@@ -698,8 +710,6 @@ namespace periodics{
     */
     void CImu::_run()
     {
-        if(!m_isActive) return;
-        
         char buffer[_100_chars];
         s8 comres = BNO055_SUCCESS;
 
@@ -726,6 +736,10 @@ namespace periodics{
         s32 s32_euler_h_deg = (s16_euler_h_raw * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
         s32 s32_euler_p_deg = (s16_euler_p_raw * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
         s32 s32_euler_r_deg = (s16_euler_r_raw * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
+        m_lastYawDegrees = static_cast<float>(s32_euler_h_deg) / 1000.0f;
+        m_hasValidYaw = true;
+
+        if(!m_isActive) return;
 
         comres = bno055_read_linear_accel_x(&s16_linear_accel_x_raw);
 

@@ -80,7 +80,7 @@ periodics::CPowermanager g_powermanager(g_baseTick * 100, g_klmanager, g_rpi, g_
 brain::CBatterymanager g_batteryManager(dummy_value);
 
 /* USER NEW COMPONENT BEGIN */
-brain::CMovelistexecutor g_movelistexecutor(g_baseTick * 1, g_rpi, g_steeringDriver, g_speedingDriver);
+brain::CMovelistexecutor g_movelistexecutor(g_baseTick * 1, g_rpi, g_steeringDriver, g_speedingDriver, g_encoder, g_imu);
 /* USER NEW COMPONENT END */
 
 // Map for redirecting messages with the key and the callback functions. If the message key equals to one of the enumerated keys, than it will be applied the paired callback function.

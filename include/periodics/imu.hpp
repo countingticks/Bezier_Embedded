@@ -69,6 +69,8 @@ namespace periodics
             static void BNO055_delay_msek(u32 msek);
             /* Serial callback implementation */
             void serialCallbackIMUcommand(char const * a, char * b);
+            float getYawDegrees() const;
+            bool hasValidYaw() const;
         private:
             /*I2C init routine */
             virtual void I2C_routine(void);
@@ -106,6 +108,8 @@ namespace periodics
             uint8_t m_velocityStationaryCounter;
             uint64_t m_delta_time;
             uint8_t m_period;
+            float m_lastYawDegrees;
+            bool m_hasValidYaw;
     }; // class CImu
 
 }; // namespace utils
