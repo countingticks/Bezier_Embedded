@@ -361,6 +361,7 @@ namespace brain
 
                 if (m_feedbackEnabled)
                 {
+                    const float motionSign = (speedFeedforward < -0.5f) ? -1.0f : 1.0f;
                     const float speedFeedback = clampFloat(
                         m_speedPid.update(m_relativeXErrorMm, dt_s),
                         -SPEED_FEEDBACK_LIMIT,
@@ -378,7 +379,7 @@ namespace brain
                     );
 
                     speedCommand += speedFeedback;
-                    steerCommand -= (lateralFeedback + headingFeedback);
+                    steerCommand -= motionSign * (lateralFeedback + headingFeedback);
                 }
             }
         }
