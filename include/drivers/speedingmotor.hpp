@@ -89,7 +89,7 @@ namespace drivers
             /** @brief PWM output pin */
             PwmOut m_pwm_pin;
             /** @brief 0 default */
-            uint16_t zero_default = 1492; //0.074568(7.4% duty cycle) * 20000us(ms_period)
+            uint16_t zero_default = 1500; //0.074568(7.4% duty cycle) * 20000us(ms_period) ex value 1492
             /** @brief 0 default */
             uint8_t ms_period = 20; // 20000us
             

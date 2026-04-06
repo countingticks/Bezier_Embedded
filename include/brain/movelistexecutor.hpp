@@ -1,6 +1,7 @@
 /**
  * @brief Move List Executor - receives adaptive keyframes from the Pi and
- *        executes them with time-based interpolation.
+ *        executes them with path-progress interpolation plus optional
+ *        arrival hold at the final point.
  */
 
 #ifndef MOVELISTEXECUTOR_HPP
@@ -65,6 +66,7 @@ namespace brain
         int32_t  ref_x_mm;         // reference global x in millimeters
         int32_t  ref_y_mm;         // reference global y in millimeters
         int16_t  ref_heading_mrad; // reference heading in milliradians
+        uint32_t progress_mm;      // cumulative path progress in millimeters
     };
 
     /** Max number of adaptive keyframes that can be queued. */
@@ -97,6 +99,24 @@ namespace brain
         private:
             virtual void _run();
             void applyInterpolatedCommand(uint32_t elapsed_ms);
+            void interpolateCommandByTime(
+                uint32_t elapsed_ms,
+                float& speedFeedforward,
+                float& steerFeedforward,
+                float& referenceXmm,
+                float& referenceYmm,
+                float& referenceHeadingRad
+            );
+            void interpolateCommandByProgress(
+                float progress_mm,
+                float& speedFeedforward,
+                float& steerFeedforward,
+                float& referenceXmm,
+                float& referenceYmm,
+                float& referenceHeadingRad
+            );
+            float estimateProgressAlongTrajectory() const;
+            bool hasReachedGoal() const;
             void updatePoseEstimate(float dt_s);
             void resetExecutionState(bool clearBuffer);
             void resetPoseEstimate();
@@ -116,6 +136,8 @@ namespace brain
             uint16_t    m_moveCount;
             bool        m_hasReferenceTrajectory;
             bool        m_feedbackEnabled;
+            bool        m_holdFinalUntilArrival;
+            uint32_t    m_arrivalToleranceMm;
 
             bool     m_executing;
             uint16_t m_currentMove;
@@ -133,6 +155,8 @@ namespace brain
             float m_referenceXmm;
             float m_referenceYmm;
             float m_referenceHeadingRad;
+            float m_referenceProgressMm;
+            float m_estimatedProgressMm;
             float m_relativeXErrorMm;
             float m_relativeYErrorMm;
             float m_headingErrorRad;

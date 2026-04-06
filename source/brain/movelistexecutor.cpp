@@ -2,12 +2,14 @@
  * @brief Move List Executor implementation.
  *
  * Lifecycle:
- *   1. Pi sends N "#moves:speed;steer;time_ms;ref_x_mm;ref_y_mm;ref_heading_mrad;;"
+ *   1. Pi sends N "#moves:speed;steer;time_ms;ref_x_mm;ref_y_mm;ref_heading_mrad;progress_mm;;"
  *      messages and the executor buffers the keyframes.
- *   2. Pi sends    "#moveGo:1;;" and execution starts.
- *   3. Nucleo interpolates feedforward speed/steer and reference pose on every tick.
+ *   2. Pi sends    "#moveGo:1;1;arrival_tolerance_mm;hold_final;;" and execution starts.
+ *   3. Nucleo estimates current path progress from the pose and interpolates
+ *      feedforward speed/steer plus reference pose on every tick.
  *   4. Encoder + IMU reconstruct the actual pose locally and apply body-frame feedback.
- *   5. Progress/telemetry is reported periodically until "@moveDone:<elapsed_ms>;;".
+ *   5. Progress/telemetry is reported periodically until the end of the path
+ *      is reached inside the configured arrival window.
  */
 
 #include <brain/movelistexecutor.hpp>
@@ -23,6 +25,7 @@ namespace
     static const float PI_FLOAT = 3.14159265358979323846f;
     static const float START_HEADING_RAD = PI_FLOAT * 0.5f;
     static const float MIN_CONTROLLER_DT_S = 0.001f;
+    static const float MIN_PROGRESS_STEP_MM = 1e-3f;
 
     static const float SPEED_KP = 2.0f;            // mm/s per mm
     static const float SPEED_KI = 0.5f;            // mm/s per (mm*s)
@@ -73,6 +76,8 @@ namespace brain
         , m_moveCount(0)
         , m_hasReferenceTrajectory(false)
         , m_feedbackEnabled(true)
+        , m_holdFinalUntilArrival(false)
+        , m_arrivalToleranceMm(0U)
         , m_executing(false)
         , m_currentMove(0)
         , m_elapsedMs(0)
@@ -88,6 +93,8 @@ namespace brain
         , m_referenceXmm(0.0f)
         , m_referenceYmm(0.0f)
         , m_referenceHeadingRad(START_HEADING_RAD)
+        , m_referenceProgressMm(0.0f)
+        , m_estimatedProgressMm(0.0f)
         , m_relativeXErrorMm(0.0f)
         , m_relativeYErrorMm(0.0f)
         , m_headingErrorRad(0.0f)
@@ -111,30 +118,25 @@ namespace brain
         }
 
         const uint32_t totalTimeMs = m_moves[m_moveCount - 1].time_ms;
+        const bool waitForArrival = m_hasReferenceTrajectory && m_holdFinalUntilArrival;
 
-        if (m_elapsedMs < totalTimeMs)
+        if (m_elapsedMs <= (0xFFFFFFFFu - m_period))
         {
             m_elapsedMs += m_period;
-            if (m_elapsedMs > totalTimeMs)
-            {
-                m_elapsedMs = totalTimeMs;
-            }
-        }
-
-        while (m_currentMove + 1 < m_moveCount && m_elapsedMs >= m_moves[m_currentMove + 1].time_ms)
-        {
-            m_currentMove++;
         }
 
         applyInterpolatedCommand(m_elapsedMs);
 
-        if ((m_elapsedMs - m_lastProgressReportMs) >= MOVE_PROGRESS_INTERVAL_MS || m_elapsedMs >= totalTimeMs)
+        const bool reachedGoal = waitForArrival && hasReachedGoal();
+        if ((m_elapsedMs - m_lastProgressReportMs) >= MOVE_PROGRESS_INTERVAL_MS ||
+            (!waitForArrival && m_elapsedMs >= totalTimeMs) ||
+            reachedGoal)
         {
             sendProgressUpdate();
             m_lastProgressReportMs = m_elapsedMs;
         }
 
-        if (m_elapsedMs >= totalTimeMs)
+        if ((!waitForArrival && m_elapsedMs >= totalTimeMs) || reachedGoal)
         {
             char buffer[64];
             snprintf(buffer, sizeof(buffer), "@moveDone:%lu;;\r\n", static_cast<unsigned long>(m_elapsedMs));
@@ -166,11 +168,22 @@ namespace brain
         long refX = 0L;
         long refY = 0L;
         int refHeading = 0;
+        unsigned long progressMm = 0UL;
 
-        const int parsed = sscanf(message, "%d;%d;%lu;%ld;%ld;%d", &speed, &steer, &timeMs, &refX, &refY, &refHeading);
-        const bool hasReferenceFrame = (parsed == 6);
+        const int parsed = sscanf(
+            message,
+            "%d;%d;%lu;%ld;%ld;%d;%lu",
+            &speed,
+            &steer,
+            &timeMs,
+            &refX,
+            &refY,
+            &refHeading,
+            &progressMm
+        );
+        const bool hasReferenceFrame = (parsed == 6 || parsed == 7);
 
-        if (parsed != 3 && parsed != 6)
+        if (parsed != 3 && parsed != 6 && parsed != 7)
         {
             sprintf(response, "syntax error");
             return;
@@ -213,6 +226,39 @@ namespace brain
         m_moves[m_moveCount].ref_x_mm = hasReferenceFrame ? static_cast<int32_t>(refX) : 0;
         m_moves[m_moveCount].ref_y_mm = hasReferenceFrame ? static_cast<int32_t>(refY) : 0;
         m_moves[m_moveCount].ref_heading_mrad = hasReferenceFrame ? static_cast<int16_t>(refHeading) : 0;
+        if (hasReferenceFrame)
+        {
+            if (m_moveCount == 0)
+            {
+                m_moves[m_moveCount].progress_mm = (parsed == 7) ? static_cast<uint32_t>(progressMm) : 0U;
+                if (m_moves[m_moveCount].progress_mm != 0U)
+                {
+                    sprintf(response, "first progress must be zero");
+                    return;
+                }
+            }
+            else if (parsed == 7)
+            {
+                m_moves[m_moveCount].progress_mm = static_cast<uint32_t>(progressMm);
+            }
+            else
+            {
+                const float dx = static_cast<float>(m_moves[m_moveCount].ref_x_mm - m_moves[m_moveCount - 1].ref_x_mm);
+                const float dy = static_cast<float>(m_moves[m_moveCount].ref_y_mm - m_moves[m_moveCount - 1].ref_y_mm);
+                m_moves[m_moveCount].progress_mm = m_moves[m_moveCount - 1].progress_mm +
+                                                   static_cast<uint32_t>(sqrtf(dx * dx + dy * dy) + 0.5f);
+            }
+
+            if (m_moveCount > 0 && m_moves[m_moveCount].progress_mm < m_moves[m_moveCount - 1].progress_mm)
+            {
+                sprintf(response, "progress order");
+                return;
+            }
+        }
+        else
+        {
+            m_moves[m_moveCount].progress_mm = 0U;
+        }
 
         m_uploadChecksum = fnv1aMix(m_uploadChecksum, static_cast<uint16_t>(m_moves[m_moveCount].speed), 2);
         m_uploadChecksum = fnv1aMix(m_uploadChecksum, static_cast<uint16_t>(m_moves[m_moveCount].steer), 2);
@@ -222,6 +268,7 @@ namespace brain
             m_uploadChecksum = fnv1aMix(m_uploadChecksum, static_cast<uint32_t>(m_moves[m_moveCount].ref_x_mm), 4);
             m_uploadChecksum = fnv1aMix(m_uploadChecksum, static_cast<uint32_t>(m_moves[m_moveCount].ref_y_mm), 4);
             m_uploadChecksum = fnv1aMix(m_uploadChecksum, static_cast<uint16_t>(m_moves[m_moveCount].ref_heading_mrad), 2);
+            m_uploadChecksum = fnv1aMix(m_uploadChecksum, m_moves[m_moveCount].progress_mm, 4);
         }
         m_moveCount++;
 
@@ -244,14 +291,21 @@ namespace brain
 
         int activate = 1;
         int feedback = 1;
-        const int parsed = sscanf(message, "%d;%d", &activate, &feedback);
-        if (parsed != 1 && parsed != 2)
+        int arrivalToleranceMm = 0;
+        int holdFinal = 0;
+        const int parsed = sscanf(message, "%d;%d;%d;%d", &activate, &feedback, &arrivalToleranceMm, &holdFinal);
+        if (parsed != 1 && parsed != 2 && parsed != 3 && parsed != 4)
         {
             sprintf(response, "syntax error");
             return;
         }
 
         m_feedbackEnabled = (feedback >= 1);
+        m_arrivalToleranceMm = (parsed >= 3 && arrivalToleranceMm > 0) ?
+            static_cast<uint32_t>(arrivalToleranceMm) :
+            0U;
+        m_holdFinalUntilArrival = m_hasReferenceTrajectory &&
+                                  ((parsed >= 4 && holdFinal >= 1) || (parsed == 3 && arrivalToleranceMm > 0));
 
         resetPoseEstimate();
         m_currentMove = 0;
@@ -305,36 +359,14 @@ namespace brain
         float referenceYmm = static_cast<float>(m_moves[m_moveCount - 1].ref_y_mm);
         float referenceHeadingRad = static_cast<float>(m_moves[m_moveCount - 1].ref_heading_mrad) / 1000.0f;
 
-        if (m_moveCount > 1 && m_currentMove + 1 < m_moveCount)
-        {
-            const MoveSegment& startFrame = m_moves[m_currentMove];
-            const MoveSegment& endFrame = m_moves[m_currentMove + 1];
-
-            if (endFrame.time_ms > startFrame.time_ms)
-            {
-                float alpha = static_cast<float>(elapsed_ms - startFrame.time_ms) /
-                              static_cast<float>(endFrame.time_ms - startFrame.time_ms);
-                alpha = clampFloat(alpha, 0.0f, 1.0f);
-
-                speedFeedforward = static_cast<float>(startFrame.speed) +
-                                   (static_cast<float>(endFrame.speed - startFrame.speed) * alpha);
-                steerFeedforward = static_cast<float>(startFrame.steer) +
-                                   (static_cast<float>(endFrame.steer - startFrame.steer) * alpha);
-
-                if (m_hasReferenceTrajectory)
-                {
-                    referenceXmm = static_cast<float>(startFrame.ref_x_mm) +
-                                   (static_cast<float>(endFrame.ref_x_mm - startFrame.ref_x_mm) * alpha);
-                    referenceYmm = static_cast<float>(startFrame.ref_y_mm) +
-                                   (static_cast<float>(endFrame.ref_y_mm - startFrame.ref_y_mm) * alpha);
-                    referenceHeadingRad = interpolateAngle(
-                        static_cast<float>(startFrame.ref_heading_mrad) / 1000.0f,
-                        static_cast<float>(endFrame.ref_heading_mrad) / 1000.0f,
-                        alpha
-                    );
-                }
-            }
-        }
+        interpolateCommandByTime(
+            elapsed_ms,
+            speedFeedforward,
+            steerFeedforward,
+            referenceXmm,
+            referenceYmm,
+            referenceHeadingRad
+        );
 
         m_referenceXmm = referenceXmm;
         m_referenceYmm = referenceYmm;
@@ -350,6 +382,33 @@ namespace brain
 
             if (m_poseReady)
             {
+                const float finalProgressMm = static_cast<float>(m_moves[m_moveCount - 1].progress_mm);
+                float estimatedProgressMm = estimateProgressAlongTrajectory();
+                if (estimatedProgressMm < m_estimatedProgressMm)
+                {
+                    estimatedProgressMm = m_estimatedProgressMm;
+                }
+                if (estimatedProgressMm > finalProgressMm)
+                {
+                    estimatedProgressMm = finalProgressMm;
+                }
+                m_estimatedProgressMm = estimatedProgressMm;
+
+                interpolateCommandByProgress(
+                    m_estimatedProgressMm,
+                    speedFeedforward,
+                    steerFeedforward,
+                    referenceXmm,
+                    referenceYmm,
+                    referenceHeadingRad
+                );
+                m_referenceXmm = referenceXmm;
+                m_referenceYmm = referenceYmm;
+                m_referenceHeadingRad = referenceHeadingRad;
+                m_referenceProgressMm = m_estimatedProgressMm;
+                speedCommand = speedFeedforward;
+                steerCommand = steerFeedforward;
+
                 const float dx = m_referenceXmm - m_poseXmm;
                 const float dy = m_referenceYmm - m_poseYmm;
                 const float cosHeading = cosf(m_poseHeadingRad);
@@ -401,6 +460,190 @@ namespace brain
         m_steeringControl.setAngle(m_lastCommandedSteer);
     }
 
+    void CMovelistexecutor::interpolateCommandByTime(
+        uint32_t elapsed_ms,
+        float& speedFeedforward,
+        float& steerFeedforward,
+        float& referenceXmm,
+        float& referenceYmm,
+        float& referenceHeadingRad
+    )
+    {
+        if (m_moveCount <= 1)
+        {
+            m_currentMove = 0;
+            return;
+        }
+
+        uint16_t segmentIndex = 0;
+        while (segmentIndex + 1 < m_moveCount && elapsed_ms >= m_moves[segmentIndex + 1].time_ms)
+        {
+            segmentIndex++;
+        }
+        m_currentMove = segmentIndex;
+
+        if (segmentIndex + 1 >= m_moveCount)
+        {
+            return;
+        }
+
+        const MoveSegment& startFrame = m_moves[segmentIndex];
+        const MoveSegment& endFrame = m_moves[segmentIndex + 1];
+        if (endFrame.time_ms <= startFrame.time_ms)
+        {
+            return;
+        }
+
+        float alpha = static_cast<float>(elapsed_ms - startFrame.time_ms) /
+                      static_cast<float>(endFrame.time_ms - startFrame.time_ms);
+        alpha = clampFloat(alpha, 0.0f, 1.0f);
+
+        speedFeedforward = static_cast<float>(startFrame.speed) +
+                           (static_cast<float>(endFrame.speed - startFrame.speed) * alpha);
+        steerFeedforward = static_cast<float>(startFrame.steer) +
+                           (static_cast<float>(endFrame.steer - startFrame.steer) * alpha);
+
+        if (m_hasReferenceTrajectory)
+        {
+            referenceXmm = static_cast<float>(startFrame.ref_x_mm) +
+                           (static_cast<float>(endFrame.ref_x_mm - startFrame.ref_x_mm) * alpha);
+            referenceYmm = static_cast<float>(startFrame.ref_y_mm) +
+                           (static_cast<float>(endFrame.ref_y_mm - startFrame.ref_y_mm) * alpha);
+            referenceHeadingRad = interpolateAngle(
+                static_cast<float>(startFrame.ref_heading_mrad) / 1000.0f,
+                static_cast<float>(endFrame.ref_heading_mrad) / 1000.0f,
+                alpha
+            );
+            m_referenceProgressMm = static_cast<float>(startFrame.progress_mm) +
+                                    (static_cast<float>(endFrame.progress_mm - startFrame.progress_mm) * alpha);
+        }
+    }
+
+    void CMovelistexecutor::interpolateCommandByProgress(
+        float progress_mm,
+        float& speedFeedforward,
+        float& steerFeedforward,
+        float& referenceXmm,
+        float& referenceYmm,
+        float& referenceHeadingRad
+    )
+    {
+        if (m_moveCount <= 1)
+        {
+            m_currentMove = 0;
+            m_referenceProgressMm = static_cast<float>(m_moves[0].progress_mm);
+            return;
+        }
+
+        uint16_t segmentIndex = 0;
+        while (segmentIndex + 1 < m_moveCount &&
+               progress_mm > static_cast<float>(m_moves[segmentIndex + 1].progress_mm))
+        {
+            segmentIndex++;
+        }
+        m_currentMove = segmentIndex;
+
+        if (segmentIndex + 1 >= m_moveCount)
+        {
+            m_referenceProgressMm = static_cast<float>(m_moves[m_moveCount - 1].progress_mm);
+            return;
+        }
+
+        const MoveSegment& startFrame = m_moves[segmentIndex];
+        const MoveSegment& endFrame = m_moves[segmentIndex + 1];
+        const float startProgressMm = static_cast<float>(startFrame.progress_mm);
+        const float endProgressMm = static_cast<float>(endFrame.progress_mm);
+
+        float alpha = 0.0f;
+        if ((endProgressMm - startProgressMm) > MIN_PROGRESS_STEP_MM)
+        {
+            alpha = (progress_mm - startProgressMm) / (endProgressMm - startProgressMm);
+        }
+        alpha = clampFloat(alpha, 0.0f, 1.0f);
+
+        speedFeedforward = static_cast<float>(startFrame.speed) +
+                           (static_cast<float>(endFrame.speed - startFrame.speed) * alpha);
+        steerFeedforward = static_cast<float>(startFrame.steer) +
+                           (static_cast<float>(endFrame.steer - startFrame.steer) * alpha);
+        referenceXmm = static_cast<float>(startFrame.ref_x_mm) +
+                       (static_cast<float>(endFrame.ref_x_mm - startFrame.ref_x_mm) * alpha);
+        referenceYmm = static_cast<float>(startFrame.ref_y_mm) +
+                       (static_cast<float>(endFrame.ref_y_mm - startFrame.ref_y_mm) * alpha);
+        referenceHeadingRad = interpolateAngle(
+            static_cast<float>(startFrame.ref_heading_mrad) / 1000.0f,
+            static_cast<float>(endFrame.ref_heading_mrad) / 1000.0f,
+            alpha
+        );
+        m_referenceProgressMm = startProgressMm + ((endProgressMm - startProgressMm) * alpha);
+    }
+
+    float CMovelistexecutor::estimateProgressAlongTrajectory() const
+    {
+        if (!m_hasReferenceTrajectory || m_moveCount == 0)
+        {
+            return 0.0f;
+        }
+
+        if (m_moveCount == 1)
+        {
+            return static_cast<float>(m_moves[0].progress_mm);
+        }
+
+        float bestDistanceSquared = 3.402823466e+38F;
+        float bestProgressMm = 0.0f;
+
+        for (uint16_t index = 0; index + 1 < m_moveCount; index++)
+        {
+            const MoveSegment& startFrame = m_moves[index];
+            const MoveSegment& endFrame = m_moves[index + 1];
+
+            const float startX = static_cast<float>(startFrame.ref_x_mm);
+            const float startY = static_cast<float>(startFrame.ref_y_mm);
+            const float deltaX = static_cast<float>(endFrame.ref_x_mm - startFrame.ref_x_mm);
+            const float deltaY = static_cast<float>(endFrame.ref_y_mm - startFrame.ref_y_mm);
+            const float segmentLengthSquared = (deltaX * deltaX) + (deltaY * deltaY);
+
+            float alpha = 0.0f;
+            if (segmentLengthSquared > MIN_PROGRESS_STEP_MM)
+            {
+                alpha = ((m_poseXmm - startX) * deltaX + (m_poseYmm - startY) * deltaY) / segmentLengthSquared;
+                alpha = clampFloat(alpha, 0.0f, 1.0f);
+            }
+
+            const float projectedX = startX + (deltaX * alpha);
+            const float projectedY = startY + (deltaY * alpha);
+            const float errorX = m_poseXmm - projectedX;
+            const float errorY = m_poseYmm - projectedY;
+            const float distanceSquared = (errorX * errorX) + (errorY * errorY);
+
+            if (distanceSquared < bestDistanceSquared)
+            {
+                bestDistanceSquared = distanceSquared;
+                bestProgressMm = static_cast<float>(startFrame.progress_mm) +
+                                 (static_cast<float>(endFrame.progress_mm - startFrame.progress_mm) * alpha);
+            }
+        }
+
+        return bestProgressMm;
+    }
+
+    bool CMovelistexecutor::hasReachedGoal() const
+    {
+        if (!m_hasReferenceTrajectory || !m_poseReady || m_moveCount == 0 || m_arrivalToleranceMm == 0U)
+        {
+            return false;
+        }
+
+        const MoveSegment& finalFrame = m_moves[m_moveCount - 1];
+        const float toleranceMm = static_cast<float>(m_arrivalToleranceMm);
+        const float remainingProgressMm = static_cast<float>(finalFrame.progress_mm) - m_estimatedProgressMm;
+        const float goalDx = static_cast<float>(finalFrame.ref_x_mm) - m_poseXmm;
+        const float goalDy = static_cast<float>(finalFrame.ref_y_mm) - m_poseYmm;
+
+        return remainingProgressMm <= toleranceMm &&
+               ((goalDx * goalDx) + (goalDy * goalDy)) <= (toleranceMm * toleranceMm);
+    }
+
     void CMovelistexecutor::updatePoseEstimate(float dt_s)
     {
         if (!m_imu.hasValidYaw())
@@ -439,6 +682,8 @@ namespace brain
             m_moveCount = 0;
             m_uploadChecksum = FNV_OFFSET_BASIS;
             m_hasReferenceTrajectory = false;
+            m_holdFinalUntilArrival = false;
+            m_arrivalToleranceMm = 0U;
         }
     }
 
@@ -453,6 +698,8 @@ namespace brain
         m_referenceXmm = 0.0f;
         m_referenceYmm = 0.0f;
         m_referenceHeadingRad = START_HEADING_RAD;
+        m_referenceProgressMm = 0.0f;
+        m_estimatedProgressMm = 0.0f;
         m_relativeXErrorMm = 0.0f;
         m_relativeYErrorMm = 0.0f;
         m_headingErrorRad = 0.0f;
