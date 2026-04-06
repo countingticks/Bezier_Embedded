@@ -26,6 +26,10 @@ namespace
     static const float START_HEADING_RAD = PI_FLOAT * 0.5f;
     static const float MIN_CONTROLLER_DT_S = 0.001f;
     static const float MIN_PROGRESS_STEP_MM = 1e-3f;
+    static const float STARTUP_MIN_EFFECTIVE_SPEED_MM_S = 40.0f;
+    static const float STARTUP_RELEASE_SPEED_MM_S = 8.0f;
+    static const float STARTUP_RELEASE_PROGRESS_MM = 6.0f;
+    static const uint32_t STARTUP_ASSIST_MAX_MS = 1200U;
 
     static const float SPEED_KP = 2.0f;            // mm/s per mm
     static const float SPEED_KI = 0.5f;            // mm/s per (mm*s)
@@ -368,6 +372,7 @@ namespace brain
             referenceHeadingRad
         );
 
+        const float timeFeedforwardSpeed = speedFeedforward;
         m_referenceXmm = referenceXmm;
         m_referenceYmm = referenceYmm;
         m_referenceHeadingRad = referenceHeadingRad;
@@ -440,6 +445,29 @@ namespace brain
                     speedCommand += speedFeedback;
                     steerCommand -= motionSign * (lateralFeedback + headingFeedback);
                 }
+            }
+        }
+
+        const float measuredSpeedMmPerSec = m_encoder.getLinearSpeed();
+        const bool startupAssistActive =
+            (elapsed_ms <= STARTUP_ASSIST_MAX_MS) &&
+            (fabsf(measuredSpeedMmPerSec) < STARTUP_RELEASE_SPEED_MM_S) &&
+            (m_estimatedProgressMm < STARTUP_RELEASE_PROGRESS_MM);
+        if (startupAssistActive)
+        {
+            float launchSpeed = timeFeedforwardSpeed;
+            if (fabsf(launchSpeed) < STARTUP_MIN_EFFECTIVE_SPEED_MM_S)
+            {
+                const float launchDirection =
+                    (launchSpeed < -0.5f) ? -1.0f :
+                    ((launchSpeed > 0.5f) ? 1.0f :
+                    ((m_moves[m_moveCount - 1].speed < 0) ? -1.0f : 1.0f));
+                launchSpeed = launchDirection * STARTUP_MIN_EFFECTIVE_SPEED_MM_S;
+            }
+
+            if (fabsf(speedCommand) < fabsf(launchSpeed))
+            {
+                speedCommand = launchSpeed;
             }
         }
 
@@ -646,6 +674,11 @@ namespace brain
 
     void CMovelistexecutor::updatePoseEstimate(float dt_s)
     {
+        const float startHeadingRad =
+            (m_hasReferenceTrajectory && m_moveCount > 0) ?
+            static_cast<float>(m_moves[0].ref_heading_mrad) / 1000.0f :
+            START_HEADING_RAD;
+
         if (!m_imu.hasValidYaw())
         {
             return;
@@ -656,13 +689,13 @@ namespace brain
         {
             m_initialYawDeg = yawDeg;
             m_headingInitialized = true;
-            m_poseHeadingRad = START_HEADING_RAD;
+            m_poseHeadingRad = startHeadingRad;
             m_poseReady = true;
             return;
         }
 
         const float yawDeltaRad = wrapAngle((yawDeg - m_initialYawDeg) * (PI_FLOAT / 180.0f));
-        m_poseHeadingRad = wrapAngle(START_HEADING_RAD - yawDeltaRad);
+        m_poseHeadingRad = wrapAngle(startHeadingRad - yawDeltaRad);
         m_poseReady = true;
 
         const float speedMmPerSec = m_encoder.getLinearSpeed();
@@ -689,17 +722,25 @@ namespace brain
 
     void CMovelistexecutor::resetPoseEstimate()
     {
+        const bool hasStartReference = m_hasReferenceTrajectory && m_moveCount > 0;
+        const float startXmm = hasStartReference ? static_cast<float>(m_moves[0].ref_x_mm) : 0.0f;
+        const float startYmm = hasStartReference ? static_cast<float>(m_moves[0].ref_y_mm) : 0.0f;
+        const float startHeadingRad = hasStartReference ?
+            static_cast<float>(m_moves[0].ref_heading_mrad) / 1000.0f :
+            START_HEADING_RAD;
+        const float startProgressMm = hasStartReference ? static_cast<float>(m_moves[0].progress_mm) : 0.0f;
+
         m_poseReady = false;
         m_headingInitialized = false;
         m_initialYawDeg = 0.0f;
-        m_poseXmm = 0.0f;
-        m_poseYmm = 0.0f;
-        m_poseHeadingRad = START_HEADING_RAD;
-        m_referenceXmm = 0.0f;
-        m_referenceYmm = 0.0f;
-        m_referenceHeadingRad = START_HEADING_RAD;
-        m_referenceProgressMm = 0.0f;
-        m_estimatedProgressMm = 0.0f;
+        m_poseXmm = startXmm;
+        m_poseYmm = startYmm;
+        m_poseHeadingRad = startHeadingRad;
+        m_referenceXmm = startXmm;
+        m_referenceYmm = startYmm;
+        m_referenceHeadingRad = startHeadingRad;
+        m_referenceProgressMm = startProgressMm;
+        m_estimatedProgressMm = startProgressMm;
         m_relativeXErrorMm = 0.0f;
         m_relativeYErrorMm = 0.0f;
         m_headingErrorRad = 0.0f;
