@@ -4,6 +4,7 @@
 // TODO: Add your code here
 
 #include <mbed.h>
+#include <drivers/serialtxbroker.hpp>
 #include <utils/task.hpp>
 #include "mbed_stats.h"
 #include <brain/globalsv.hpp>
@@ -21,7 +22,7 @@ namespace periodics
             /* Construnctor */
             CResourcemonitor(
                 std::chrono::milliseconds f_period,
-                UnbufferedSerial& f_serial
+                drivers::CSerialTxBroker& f_serialBroker
             );
             /* Destructor */
             ~CResourcemonitor();
@@ -32,7 +33,7 @@ namespace periodics
             /* private variables & method member */
             virtual void    _run();
 
-            UnbufferedSerial& m_serial;
+            drivers::CSerialTxBroker& m_serialBroker;
 
             bool m_isActive;
     }; // class CResourcemonitor

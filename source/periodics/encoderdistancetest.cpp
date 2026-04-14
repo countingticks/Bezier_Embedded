@@ -40,13 +40,13 @@ namespace periodics
 {
     CEncoderDistanceTest::CEncoderDistanceTest(
             std::chrono::milliseconds f_period,
-            UnbufferedSerial& f_serial,
+            drivers::CSerialTxBroker& f_serialBroker,
             CEncoder& f_encoder,
             drivers::ISteeringCommand& f_steeringControl,
             drivers::ISpeedingCommand& f_speedingControl
         )
         : utils::CTask(f_period)
-        , m_serial(f_serial)
+        , m_serialBroker(f_serialBroker)
         , m_encoder(f_encoder)
         , m_steeringControl(f_steeringControl)
         , m_speedingControl(f_speedingControl)
@@ -134,6 +134,6 @@ namespace periodics
         m_isRunning = false;
 
         snprintf(l_buffer, sizeof(l_buffer), "@encTest:%d;%d;;\r\n", l_distanceMm, l_averageSpeedMmPerSec);
-        m_serial.write(l_buffer, strlen(l_buffer));
+        m_serialBroker.sendReliable(l_buffer, strlen(l_buffer));
     }
 }; // namespace periodics

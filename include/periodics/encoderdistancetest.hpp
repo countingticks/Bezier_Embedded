@@ -32,6 +32,7 @@
 #define ENCODER_DISTANCE_TEST_HPP
 
 #include <mbed.h>
+#include <drivers/serialtxbroker.hpp>
 #include <utils/task.hpp>
 #include <periodics/encoder.hpp>
 #include <drivers/speedingmotor.hpp>
@@ -46,7 +47,7 @@ namespace periodics
         public:
             CEncoderDistanceTest(
                 std::chrono::milliseconds f_period,
-                UnbufferedSerial& f_serial,
+                drivers::CSerialTxBroker& f_serialBroker,
                 CEncoder& f_encoder,
                 drivers::ISteeringCommand& f_steeringControl,
                 drivers::ISpeedingCommand& f_speedingControl
@@ -59,7 +60,7 @@ namespace periodics
             virtual void _run();
             void finishTest();
 
-            UnbufferedSerial& m_serial;
+            drivers::CSerialTxBroker& m_serialBroker;
             CEncoder& m_encoder;
             drivers::ISteeringCommand& m_steeringControl;
             drivers::ISpeedingCommand& m_speedingControl;

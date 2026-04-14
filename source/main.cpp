@@ -38,6 +38,7 @@ const std::chrono::milliseconds g_baseTick = std::chrono::milliseconds(1);
 
 // Serial interface with the another device(like single board computer). It's an built-in class of mbed based on the UART communication, the inputs have to be transmitter and receiver pins. 
 UnbufferedSerial g_rpi(USBTX, USBRX, 115200);
+drivers::CSerialTxBroker g_serialTxBroker(g_rpi);
 
 auto dummy = []() {
     g_rpi.write("# Booting up... wait for I'm alive #\r\n", 37);
@@ -50,37 +51,36 @@ periodics::CBlinker g_blinker(g_baseTick * 500, LED1);
 periodics::CAlerts g_alerts(g_baseTick * 5000);
 
 // // It's a task for sending periodically the instant current consumption of the battery
-periodics::CInstantConsumption g_instantconsumption(g_baseTick * 1000, A2, g_rpi);
+periodics::CInstantConsumption g_instantconsumption(g_baseTick * 1000, A2, g_serialTxBroker);
 
 // // It's a task for sending periodically the battery voltage, so to notice when discharging
-periodics::CTotalVoltage g_totalvoltage(g_baseTick*3000, A4, g_rpi);
-
-// It's a task for sending periodically the IMU values
-periodics::CImu g_imu(g_baseTick*50, g_rpi, I2C_SDA, I2C_SCL);
+periodics::CTotalVoltage g_totalvoltage(g_baseTick*3000, A4, g_serialTxBroker);
 
 // It's a task for measuring the wheel speed using the AS5600 encoder over I2C.
-periodics::CEncoder g_encoder(g_baseTick * 4, g_rpi, D5, D7);
+periodics::CEncoder g_encoder(g_baseTick * 4, g_serialTxBroker, D5, D7);
 
 //PIN for a motor speed in ms, inferior and superior limit
 drivers::CSpeedingMotor g_speedingDriver(D3, -500, 500, g_encoder); //speed in mm/s
 
 //PIN for angle in servo degrees, inferior and superior limit scaled by 10 for precision (250 = 25.0°)
 drivers::CSteeringMotor g_steeringDriver(D4, -250, 250);
-periodics::CEncoderDistanceTest g_encoderDistanceTest(g_baseTick * 4, g_rpi, g_encoder, g_steeringDriver, g_speedingDriver);
+periodics::CImu g_imu(g_baseTick*20, g_serialTxBroker, g_encoder, g_speedingDriver, I2C_SDA, I2C_SCL);
+periodics::CEncoderDistanceTest g_encoderDistanceTest(g_baseTick * 4, g_serialTxBroker, g_encoder, g_steeringDriver, g_speedingDriver);
 
 // Create the motion controller, which controls the robot states and the robot moves based on the transmitted command over the serial interface.
-brain::CRobotStateMachine g_robotstatemachine(g_baseTick * 1, g_rpi, g_steeringDriver, g_speedingDriver);
+brain::CRobotStateMachine g_robotstatemachine(g_baseTick * 1, g_serialTxBroker, g_steeringDriver, g_speedingDriver);
 
-periodics::CResourcemonitor g_resourceMonitor(g_baseTick * 5000, g_rpi);
+periodics::CResourcemonitor g_resourceMonitor(g_baseTick * 5000, g_serialTxBroker);
 
 brain::CKlmanager g_klmanager(g_alerts, g_imu, g_instantconsumption, g_totalvoltage, g_robotstatemachine, g_resourceMonitor);
 
-periodics::CPowermanager g_powermanager(g_baseTick * 100, g_klmanager, g_rpi, g_totalvoltage, g_instantconsumption, g_alerts);
+periodics::CPowermanager g_powermanager(g_baseTick * 100, g_klmanager, g_serialTxBroker, g_totalvoltage, g_instantconsumption, g_alerts);
 
 brain::CBatterymanager g_batteryManager(dummy_value);
 
 /* USER NEW COMPONENT BEGIN */
-brain::CMovelistexecutor g_movelistexecutor(g_baseTick * 1, g_rpi, g_steeringDriver, g_speedingDriver, g_encoder, g_imu);
+brain::CMovelistexecutor g_movelistexecutor(g_baseTick * 1, g_serialTxBroker, g_steeringDriver, g_speedingDriver, g_encoder, g_imu);
+periodics::CStateReporter g_stateReporter(g_baseTick * 20, g_serialTxBroker, g_encoder, g_imu, g_steeringDriver);
 /* USER NEW COMPONENT END */
 
 // Map for redirecting messages with the key and the callback functions. If the message key equals to one of the enumerated keys, than it will be applied the paired callback function.
@@ -96,6 +96,7 @@ drivers::CSerialMonitor::CSerialSubscriberMap g_serialMonitorSubscribers = {
     {"instant",        mbed::callback(&g_instantconsumption,&periodics::CInstantConsumption::serialCallbackINSTANTcommand)},
     {"imu",            mbed::callback(&g_imu,               &periodics::CImu::serialCallbackIMUcommand)},
     {"encoder",        mbed::callback(&g_encoder,           &periodics::CEncoder::serialCallbackENCODERcommand)},
+    {"state",          mbed::callback(&g_stateReporter,     &periodics::CStateReporter::serialCallbackSTATEcommand)},
     {"encTest",        mbed::callback(&g_encoderDistanceTest,&periodics::CEncoderDistanceTest::serialCallbackENCTESTcommand)},
     {"kl",             mbed::callback(&g_klmanager,         &brain::CKlmanager::serialCallbackKLCommand)},
     {"batteryCapacity",mbed::callback(&g_batteryManager,    &brain::CBatterymanager::serialCallbackBATTERYCommand)},
@@ -106,7 +107,7 @@ drivers::CSerialMonitor::CSerialSubscriberMap g_serialMonitorSubscribers = {
 };
 
 // Create the serial monitor object, which decodes, redirects the messages and transmits the responses.
-drivers::CSerialMonitor g_serialMonitor(g_rpi, g_serialMonitorSubscribers);
+drivers::CSerialMonitor g_serialMonitor(g_rpi, g_serialTxBroker, g_serialMonitorSubscribers);
 
 // List of the task, each task will be applied their own periodicity, defined by the initializing the objects.
 utils::CTask* g_taskList[] = {
@@ -116,6 +117,7 @@ utils::CTask* g_taskList[] = {
     &g_imu,
     &g_encoder,
     &g_encoderDistanceTest,
+    &g_stateReporter,
     &g_robotstatemachine,
     &g_serialMonitor,
     &g_powermanager,
@@ -159,6 +161,7 @@ uint8_t setup()
  */
 uint8_t loop()
 {
+    g_taskManager.waitForNextTick();
     g_taskManager.mainCallback();
     return 0;
 }

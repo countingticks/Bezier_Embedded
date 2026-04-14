@@ -3,6 +3,12 @@
 
 cmake_minimum_required(VERSION 3.19.0)
 
+# Force CMake 3.x policy behavior when running under CMake 4.x
+# Mbed OS toolchain files are not compatible with CMake 4.x defaults
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0")
+    cmake_policy(VERSION 3.19)
+endif()
+
 # Must be set before project() so CMake 4.x doesn't inject Windows-specific
 # linker flags (--major-image-version, -lkernel32, etc.) during compiler tests
 set(CMAKE_SYSTEM_NAME Generic)

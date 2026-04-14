@@ -45,12 +45,12 @@ namespace brain{
      */
     CRobotStateMachine::CRobotStateMachine(
             std::chrono::milliseconds                      f_period,
-            UnbufferedSerial&             f_serialPort,
+            drivers::CSerialTxBroker&     f_serialBroker,
             drivers::ISteeringCommand&    f_steeringControl,
             drivers::ISpeedingCommand&    f_speedingControl
         ) 
         : utils::CTask(f_period)
-        , m_serialPort(f_serialPort)
+        , m_serialBroker(f_serialBroker)
         , m_steeringControl(f_steeringControl)
         , m_speedingControl(f_speedingControl)
         , m_state(0)
@@ -81,11 +81,11 @@ namespace brain{
         char buffer[100];
         switch(m_state)
         {
-            // speed state - control the dc motor rotation speed and the steering angle. 
+                // speed state - control the dc motor rotation speed and the steering angle. 
             case 1:
                 m_speedingControl.setSpeed(m_speed); // Set the reference speed
                 snprintf(buffer, sizeof(buffer), "@speed:%d;;\r\n", m_speed);
-                m_serialPort.write(buffer, strlen(buffer));
+                m_serialBroker.sendReliable(buffer, strlen(buffer));
                 m_state = 0;
                 break;
 
@@ -93,7 +93,7 @@ namespace brain{
             case 2:
                 m_steeringControl.setAngle(m_steering); // control the steering angle
                 snprintf(buffer, sizeof(buffer), "@steer:%d;;\r\n", m_steering);
-                m_serialPort.write(buffer, strlen(buffer));
+                m_serialBroker.sendReliable(buffer, strlen(buffer));
                 m_state = 0;
                 break;
 
@@ -102,7 +102,7 @@ namespace brain{
                 m_steeringControl.setAngle(m_steering); // control the steering angle 
                 m_speedingControl.setBrake();
                 snprintf(buffer, sizeof(buffer), "@brake:1;;\r\n");
-                m_serialPort.write(buffer, strlen(buffer));
+                m_serialBroker.sendReliable(buffer, strlen(buffer));
                 m_state = 0;
                 break;
 
@@ -115,9 +115,9 @@ namespace brain{
                     m_steeringControl.setAngle(0);
                     m_state = 0;
 
-                    if(!m_calibON) m_serialPort.write("@vcd:0;0;0;;\r\n", 15);
+                    if(!m_calibON) m_serialBroker.sendReliable("@vcd:0;0;0;;\r\n", 15);
                     else{
-                       m_serialPort.write("@vcdCalib:0;0;;\r\n", 18);
+                       m_serialBroker.sendReliable("@vcdCalib:0;0;;\r\n", 18);
                        m_calibON = false;
                     } 
                     

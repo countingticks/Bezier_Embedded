@@ -50,10 +50,10 @@ namespace periodics{
     CTotalVoltage::CTotalVoltage(
             std::chrono::milliseconds f_period, 
             mbed::AnalogIn f_pin, 
-            UnbufferedSerial& f_serial) 
+            drivers::CSerialTxBroker& f_serialBroker) 
         : utils::CTask(f_period)
         , m_pin(f_pin)
-        , m_serial(f_serial)
+        , m_serialBroker(f_serialBroker)
         , m_isActive(false)
         , m_adcCounter(0)
     {
@@ -127,7 +127,7 @@ namespace periodics{
         char buffer[_18_chars];
 
         snprintf(buffer, sizeof(buffer), "@battery:%d;;\r\n", uint16_globalsV_battery_totalVoltage);
-        m_serial.write(buffer,strlen(buffer));
+        m_serialBroker.sendReliable(buffer, strlen(buffer));
     }
 
 }; // namespace periodics

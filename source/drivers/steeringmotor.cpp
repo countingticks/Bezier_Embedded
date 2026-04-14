@@ -53,6 +53,7 @@ namespace drivers{
         :m_pwm_pin(f_pwm_pin)
         ,m_inf_limit(f_inf_limit)
         ,m_sup_limit(f_sup_limit)
+        ,m_commandedAngle(0)
     {
         // Wait for Nucleo startup stabilization to prevent erratic motor
         // behavior caused by power-on reset cycles affecting PWM signals
@@ -128,6 +129,7 @@ namespace drivers{
      */
     void CSteeringMotor::setAngle(int f_angle)
     {
+        m_commandedAngle = f_angle;
         pwm_value = zero_default;
 
         if(calibrated == 1)
@@ -237,5 +239,10 @@ namespace drivers{
             return m_inf_limit;
         }
     };
+
+    int CSteeringMotor::getCommandedAngle() const
+    {
+        return m_commandedAngle;
+    }
 
 }; // namespace hardware::drivers

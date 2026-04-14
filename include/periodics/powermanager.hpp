@@ -34,6 +34,7 @@
 // TODO: Add your code here
 #include <mbed.h>
 /* Header file for the task manager library, which  applies periodically the fun function of it's children*/
+#include <drivers/serialtxbroker.hpp>
 #include <utils/task.hpp>
 #include <brain/globalsv.hpp>
 #include <brain/klmanager.hpp>
@@ -55,7 +56,7 @@ namespace periodics
             CPowermanager(
                 std::chrono::milliseconds f_period,
                 brain::CKlmanager& f_CKlmanager,
-                UnbufferedSerial& f_serial,
+                drivers::CSerialTxBroker& f_serialBroker,
                 periodics::CTotalVoltage& f_totalVoltage,
                 periodics::CInstantConsumption& f_instantConsumption,
                 periodics::CAlerts& f_alerts
@@ -70,7 +71,7 @@ namespace periodics
 
             brain::CKlmanager& m_CKlmanager;
 
-            UnbufferedSerial& m_serial;
+            drivers::CSerialTxBroker& m_serialBroker;
 
             periodics::CTotalVoltage& m_totalVoltage;
 

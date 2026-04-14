@@ -42,8 +42,9 @@ namespace utils{
      */
     CTask::CTask(std::chrono::milliseconds f_period) 
         : m_period(f_period)
-        , m_ticks(std::chrono::milliseconds(0))
-        , m_triggered(false) 
+        , m_periodTicks(static_cast<uint32_t>(f_period.count()))
+        , m_nextReleaseTick(0U)
+        , m_firstReleasePending(true)
     {
     }
 
@@ -57,33 +58,43 @@ namespace utils{
     void CTask::setNewPeriod(uint16_t f_period)
     {
         m_period = std::chrono::milliseconds(f_period);
-        m_ticks = std::chrono::milliseconds(0);
-    }
-
-    /** @brief  Timer callback */
-    void CTask::timerCallback()
-    {
-        m_ticks += std::chrono::milliseconds(1);
-        if (m_ticks >= m_period)
-        {
-            m_ticks = std::chrono::milliseconds(0);
-            m_triggered = true;
-        }
+        m_periodTicks = static_cast<uint32_t>(f_period);
+        m_nextReleaseTick = 0U;
+        m_firstReleasePending = true;
     }
 
     /** \brief  Run method
      *
-     *  It applies the '_run' method, which implements the task's functionality. It has to override in the derived class.  
-     *  
-     *  
+     *  The scheduler passes the current base tick. Zero-period tasks are
+     *  treated as pollers and run every dispatch cycle, while periodic tasks
+     *  become runnable only when their next release tick is reached.
      */
-    void CTask::run()
+    void CTask::run(uint32_t f_tickCount)
     {
-        if (m_triggered)
+        if (m_periodTicks == 0U)
         {
-            m_triggered = false;
             _run();
+            return;
         }
+
+        if (m_firstReleasePending)
+        {
+            m_nextReleaseTick = f_tickCount + m_periodTicks;
+            m_firstReleasePending = false;
+            return;
+        }
+
+        if (f_tickCount < m_nextReleaseTick)
+        {
+            return;
+        }
+
+        do
+        {
+            m_nextReleaseTick += m_periodTicks;
+        } while (f_tickCount >= m_nextReleaseTick);
+
+        _run();
     }// namespace CTask
 
 }; // namespace utils

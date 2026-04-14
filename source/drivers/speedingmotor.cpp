@@ -53,6 +53,7 @@ namespace drivers{
         : m_pwm_pin(f_pwm_pin)
         , m_inf_limit(f_inf_limit)
         , m_sup_limit(f_sup_limit)
+        , m_commandedSpeed(0)
         , m_encoder(f_encoder)
     {
         // Set the ms_period on the pwm_pin
@@ -73,6 +74,7 @@ namespace drivers{
      */
     void CSpeedingMotor::setSpeed(int f_speed)
     {
+        m_commandedSpeed = f_speed;
         pwm_value = zero_default;
 
         if (f_speed != 0) {
@@ -152,6 +154,7 @@ namespace drivers{
      */
     void CSpeedingMotor::setBrake()
     {
+        m_commandedSpeed = 0;
         m_pwm_pin.pulsewidth_us(zero_default);
     };
 
@@ -251,5 +254,10 @@ namespace drivers{
             return m_inf_limit;
         }
     };
+
+    int CSpeedingMotor::getCommandedSpeed() const
+    {
+        return m_commandedSpeed;
+    }
 
 }; // namespace hardware::drivers

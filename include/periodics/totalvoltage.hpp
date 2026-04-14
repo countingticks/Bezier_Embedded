@@ -36,6 +36,7 @@
 /* The mbed library */
 #include <mbed.h>
 /* Header file for the task manager library, which  applies periodically the fun function of it's children*/
+#include <drivers/serialtxbroker.hpp>
 #include <utils/task.hpp>
 #include <brain/globalsv.hpp>
 #include <chrono>
@@ -53,7 +54,7 @@ namespace periodics
             CTotalVoltage(
                 std::chrono::milliseconds f_period,
                 mbed::AnalogIn f_pin, 
-                UnbufferedSerial& f_serial
+                drivers::CSerialTxBroker& f_serialBroker
             );
             /* Destructor */
             ~CTotalVoltage();
@@ -67,7 +68,7 @@ namespace periodics
             /* ADC input pin for instand consume */
             mbed::AnalogIn      m_pin;  
             /* @brief Serial communication obj.  */
-            UnbufferedSerial&          m_serial;
+            drivers::CSerialTxBroker&  m_serialBroker;
             /** @brief Active flag  */
             bool                m_isActive;
             /* @brief ADC counter */

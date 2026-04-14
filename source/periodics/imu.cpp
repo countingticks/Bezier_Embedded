@@ -31,6 +31,8 @@
 
 #include <periodics/imu.hpp>
 #include "imu.hpp"
+#include <cmath>
+#include <cstdlib>
 
 #define _100_chars                      100
 #define BNO055_EULER_DIV_DEG_int        16
@@ -54,23 +56,27 @@ namespace periodics{
 
     CImu::CImu(
             std::chrono::milliseconds    f_period, 
-            UnbufferedSerial& f_serial,
+            drivers::CSerialTxBroker& f_serialBroker,
+            CEncoder& f_encoder,
+            drivers::ISpeedingCommand& f_speedingControl,
             PinName SDA,
             PinName SCL)
         : utils::CTask(f_period)
         , m_isActive(false)
-        , m_serial(f_serial)
-        , m_velocityX(0)
-        , m_velocityY(0)
-        , m_velocityZ(0)
-        , m_velocityStationaryCounter(0)
-        , m_delta_time(f_period.count())
+        , m_serialBroker(f_serialBroker)
+        , m_encoder(f_encoder)
+        , m_speedingControl(f_speedingControl)
+        , m_lastRollDegrees(0.0f)
+        , m_lastPitchDegrees(0.0f)
         , m_lastYawDegrees(0.0f)
         , m_hasValidYaw(false)
+        , m_sampleAccumulatorMs(0U)
+        , m_publishAccumulatorMs(0U)
+        , m_reportIntervalMs(c_defaultReportIntervalMs)
     {
-        if(m_delta_time < 150){
-            setNewPeriod(150);
-            m_delta_time = 150;
+        if (f_period.count() < static_cast<int64_t>(c_minTaskPeriodMs))
+        {
+            setNewPeriod(c_minTaskPeriodMs);
         }
         
         s32 comres = BNO055_ERROR;
@@ -209,14 +215,24 @@ namespace periodics{
      * 
      */
     void CImu::serialCallbackIMUcommand(char const * a, char * b) {
-        uint8_t l_isActivate=0;
-        uint8_t l_res = sscanf(a,"%hhu",&l_isActivate);
+        unsigned int l_isActivate = 0U;
+        unsigned int l_reportIntervalMs = c_defaultReportIntervalMs;
+        const int l_res = sscanf(a,"%u;%u",&l_isActivate, &l_reportIntervalMs);
 
-        if(1 == l_res){
+        if(l_res == 1 || l_res == 2){
             if(uint8_globalsV_value_of_kl == 15 || uint8_globalsV_value_of_kl == 30)
             {
-                m_isActive=(l_isActivate>=1);
-                bool_globalsV_imu_isActive = (l_isActivate>=1);
+                if (l_res == 2)
+                {
+                    if (l_reportIntervalMs < c_minReportIntervalMs)
+                    {
+                        l_reportIntervalMs = c_minReportIntervalMs;
+                    }
+                    m_reportIntervalMs = l_reportIntervalMs;
+                }
+
+                m_isActive=(l_isActivate>=1U);
+                bool_globalsV_imu_isActive = (l_isActivate>=1U);
                 sprintf(b,"1");
             }
             else{
@@ -710,85 +726,67 @@ namespace periodics{
     */
     void CImu::_run()
     {
-        char buffer[_100_chars];
         s8 comres = BNO055_SUCCESS;
+        const uint32_t l_taskPeriodMs = static_cast<uint32_t>(m_period.count());
+        const bool l_motionActive =
+            (fabsf(m_encoder.getLinearSpeed()) > 5.0f) ||
+            (std::abs(m_speedingControl.getCommandedSpeed()) > 5);
+        const uint32_t l_samplePeriodMs = l_motionActive ? c_motionSamplePeriodMs : c_idleSamplePeriodMs;
+
+        m_sampleAccumulatorMs += l_taskPeriodMs;
+        if (m_sampleAccumulatorMs < l_samplePeriodMs)
+        {
+            return;
+        }
+        m_sampleAccumulatorMs = 0U;
 
         s16 s16_euler_h_raw = BNO055_INIT_VALUE;
         s16 s16_euler_p_raw = BNO055_INIT_VALUE;
         s16 s16_euler_r_raw = BNO055_INIT_VALUE;
 
-        s16 s16_linear_accel_x_raw = BNO055_INIT_VALUE;
-        s16 s16_linear_accel_y_raw = BNO055_INIT_VALUE;
-        s16 s16_linear_accel_z_raw = BNO055_INIT_VALUE;
-
         comres += bno055_read_euler_h(&s16_euler_h_raw);
-
-        if(comres != BNO055_SUCCESS) return;
+        if (comres != BNO055_SUCCESS) return;
 
         comres += bno055_read_euler_p(&s16_euler_p_raw);
-
-        if(comres != BNO055_SUCCESS) return;
+        if (comres != BNO055_SUCCESS) return;
 
         comres += bno055_read_euler_r(&s16_euler_r_raw);
+        if (comres != BNO055_SUCCESS) return;
 
-        if(comres != BNO055_SUCCESS) return;
+        const s32 s32_euler_h_deg = (s16_euler_h_raw * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
+        const s32 s32_euler_p_deg = (s16_euler_p_raw * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
+        const s32 s32_euler_r_deg = (s16_euler_r_raw * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
 
-        s32 s32_euler_h_deg = (s16_euler_h_raw * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
-        s32 s32_euler_p_deg = (s16_euler_p_raw * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
-        s32 s32_euler_r_deg = (s16_euler_r_raw * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
+        m_lastRollDegrees = static_cast<float>(s32_euler_r_deg) / 1000.0f;
+        m_lastPitchDegrees = static_cast<float>(s32_euler_p_deg) / 1000.0f;
         m_lastYawDegrees = static_cast<float>(s32_euler_h_deg) / 1000.0f;
         m_hasValidYaw = true;
 
-        if(!m_isActive) return;
-
-        comres = bno055_read_linear_accel_x(&s16_linear_accel_x_raw);
-
-        if(comres != BNO055_SUCCESS) return;
-
-        comres = bno055_read_linear_accel_y(&s16_linear_accel_y_raw);
-
-        if(comres != BNO055_SUCCESS) return;
-
-        comres = bno055_read_linear_accel_z(&s16_linear_accel_z_raw);
-
-        if(comres != BNO055_SUCCESS) return;
-
-        s32 s16_linear_accel_x_msq = (s16_linear_accel_x_raw * precision_scaling_factor) / BNO055_LINEAR_ACCEL_DIV_MSQ_int;
-        s32 s16_linear_accel_y_msq = (s16_linear_accel_y_raw * precision_scaling_factor) / BNO055_LINEAR_ACCEL_DIV_MSQ_int;
-        s32 s16_linear_accel_z_msq = (s16_linear_accel_z_raw * precision_scaling_factor) / BNO055_LINEAR_ACCEL_DIV_MSQ_int;
-
-        if((-110 <= s16_linear_accel_x_msq && s16_linear_accel_x_msq <= 110) && (-110 <= s16_linear_accel_y_msq && s16_linear_accel_y_msq <= 110))
+        if (!m_isActive)
         {
-            m_velocityX += 0 * m_delta_time; // Δt = m_delta_time
-            m_velocityY += 0 * m_delta_time;
-            m_velocityZ += 0 * m_delta_time;
-            m_velocityStationaryCounter += 1;
-            if (m_velocityStationaryCounter == 10)
-            {
-                m_velocityX = 0;
-                m_velocityY = 0;
-                m_velocityZ = 0;
-                m_velocityStationaryCounter = 0;
-            }
-            
-        }
-        else{
-            m_velocityX += (s16_linear_accel_x_msq * (uint16_t)m_delta_time) / 1000; // Δt = m_delta_time
-            m_velocityY += (s16_linear_accel_y_msq * (uint16_t)m_delta_time) / 1000;
-            m_velocityZ += (s16_linear_accel_z_msq * (uint16_t)m_delta_time) / 1000;
-            m_velocityStationaryCounter = 0;
+            return;
         }
 
-        if(comres != BNO055_SUCCESS) return;
+        m_publishAccumulatorMs += l_samplePeriodMs;
+        if (m_publishAccumulatorMs < m_reportIntervalMs)
+        {
+            return;
+        }
+        m_publishAccumulatorMs = 0U;
 
-        snprintf(buffer, sizeof(buffer), "@imu:%d.%03d;%d.%03d;%d.%03d;%d.%03d;%d.%03d;%d.%03d;;\r\n",
-            s32_euler_r_deg/1000, abs(s32_euler_r_deg%1000),
-            s32_euler_p_deg/1000, abs(s32_euler_p_deg%1000),
-            s32_euler_h_deg/1000, abs(s32_euler_h_deg%1000),
-            m_velocityX/1000, abs(m_velocityX%1000),
-            m_velocityY/1000, abs(m_velocityY%1000),
-            m_velocityZ/1000, abs(m_velocityZ%1000));
-        m_serial.write(buffer,strlen(buffer));
+        char buffer[_100_chars];
+        snprintf(
+            buffer,
+            sizeof(buffer),
+            "@imu:%d.%03d;%d.%03d;%d.%03d;%d.%03d;%d.%03d;%d.%03d;;\r\n",
+            s32_euler_r_deg/1000, std::abs(s32_euler_r_deg%1000),
+            s32_euler_p_deg/1000, std::abs(s32_euler_p_deg%1000),
+            s32_euler_h_deg/1000, std::abs(s32_euler_h_deg%1000),
+            0, 0,
+            0, 0,
+            0, 0
+        );
+        m_serialBroker.publishLatest(drivers::CSerialTxBroker::TelemetryTopic::Imu, buffer, strlen(buffer));
     }
 
 }; // namespace periodics

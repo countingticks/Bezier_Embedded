@@ -36,6 +36,7 @@
 /* The mbed library */
 #include <mbed.h>
 /* Header file for the task manager library, which  applies periodically the fun function of it's children*/
+#include <drivers/serialtxbroker.hpp>
 #include <utils/task.hpp>
 #include <brain/globalsv.hpp>
 
@@ -57,7 +58,7 @@ namespace periodics
             CInstantConsumption(
                 std::chrono::milliseconds f_period, 
                 mbed::AnalogIn f_pin, 
-                UnbufferedSerial& f_serial
+                drivers::CSerialTxBroker& f_serialBroker
             );
             /* Destructor */
             ~CInstantConsumption();
@@ -74,7 +75,7 @@ namespace periodics
             /** @brief Active flag  */
             bool            m_isActive;
             /* @brief Serial communication obj.  */
-            UnbufferedSerial&          m_serial;
+            drivers::CSerialTxBroker&  m_serialBroker;
 
             uint64_t m_period;
     }; // class CInstantConsumption

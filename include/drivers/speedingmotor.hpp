@@ -55,6 +55,7 @@ namespace drivers
             virtual void setBrake() = 0 ;
             virtual int get_upper_limit() = 0 ;
             virtual int get_lower_limit() = 0 ;
+            virtual int getCommandedSpeed() const = 0;
             
             int16_t pwm_value = 0; 
     };
@@ -85,6 +86,7 @@ namespace drivers
             void setBrake();
             int get_upper_limit();
             int get_lower_limit();
+            int getCommandedSpeed() const;
         private:
             /** @brief PWM output pin */
             PwmOut m_pwm_pin;
@@ -97,6 +99,8 @@ namespace drivers
             const int m_inf_limit;
             /** @brief Superior limit */
             const int m_sup_limit;
+            /* @brief Last requested speed in mm/s */
+            int m_commandedSpeed;
             /* Encoder used for measured speed feedback */
             periodics::CEncoder& m_encoder;
 

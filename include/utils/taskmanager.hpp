@@ -57,6 +57,8 @@ namespace utils
             virtual ~CTaskManager();
             /** @brief  The main callback method aims to apply the subtasks' run method. */
             void mainCallback();
+            /** @brief Sleep the main loop until at least one base tick elapsed. */
+            void waitForNextTick();
             /** @brief  Timer callback method applies the subtasks' callback function. */
             void timerCallback();
         private:
@@ -64,6 +66,12 @@ namespace utils
             utils::CTask** m_taskList;
             /** @brief  number of tasks */
             uint8_t m_taskCount;
+            /** @brief base tick period */
+            std::chrono::milliseconds m_baseFreq;
+            /** @brief current scheduler tick incremented from the ticker ISR */
+            volatile uint32_t m_tickCount;
+            /** @brief last tick already dispatched on the main thread */
+            uint32_t m_lastDispatchedTick;
             /** @brief  Ticker for periodic applying the timer callback function  */
             Ticker m_ticker;
             

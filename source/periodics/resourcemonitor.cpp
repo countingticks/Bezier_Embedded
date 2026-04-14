@@ -10,9 +10,9 @@ namespace periodics
     * @brief Class constructorresourcemonitor
     *
     */
-    CResourcemonitor::CResourcemonitor(std::chrono::milliseconds f_period, UnbufferedSerial& f_serial)
+    CResourcemonitor::CResourcemonitor(std::chrono::milliseconds f_period, drivers::CSerialTxBroker& f_serialBroker)
     : utils::CTask(f_period)
-    , m_serial(f_serial)
+    , m_serialBroker(f_serialBroker)
     , m_isActive(false)
     {
         /* constructor behaviour */
@@ -61,7 +61,7 @@ namespace periodics
 
         snprintf(buffer, sizeof(buffer), "@resourceMonitor:Heap (%d.%d);Stack (%d.%d);;\r\n", heap_usage_percentage/100, heap_usage_percentage%100,
                                             stack_usage_percentage/100, stack_usage_percentage%100);
-        m_serial.write(buffer,strlen(buffer));
+        m_serialBroker.sendReliable(buffer, strlen(buffer));
     }
 
 }; // namespace periodics

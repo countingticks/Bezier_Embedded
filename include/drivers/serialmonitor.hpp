@@ -34,6 +34,7 @@
 
 /* The mbed library */
 #include <mbed.h>
+#include <drivers/serialtxbroker.hpp>
 /* Header file for the task manager library, which  applies periodically the fun function of it's children*/
 #include <utils/taskmanager.hpp>
 /* Header file for the queue manager library*/
@@ -71,6 +72,7 @@ namespace drivers
             /* Constructor */
             CSerialMonitor(
                 UnbufferedSerial& f_serialPort,
+                CSerialTxBroker& f_serialBroker,
                 CSerialSubscriberMap f_serialSubscriberMap
             );
             /* Destructor */
@@ -78,17 +80,15 @@ namespace drivers
         private:
             /* Rx callback actions */
             void serialRxCallback();
-            /* Tx callback actions */
-            void serialTxCallback();
             /* Run method */
             virtual void _run();
 
             /** @brief Serial communication port */
             UnbufferedSerial& m_serialPort;
+            /** @brief Shared serial tx broker */
+            CSerialTxBroker& m_serialBroker;
             /** @brief Rx buffer */
             utils::CQueue<char,255> m_RxBuffer;
-            /** @brief Tx buffer */
-            utils::CQueue<char,255> m_TxBuffer;
             /** @brief Data buffer */
             array<char,256> m_parseBuffer;
             /** @brief Parse iterator */

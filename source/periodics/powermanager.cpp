@@ -52,14 +52,14 @@ namespace periodics
     CPowermanager::CPowermanager(
         std::chrono::milliseconds f_period,
         brain::CKlmanager& f_CKlmanager,
-        UnbufferedSerial& f_serial,
+        drivers::CSerialTxBroker& f_serialBroker,
         periodics::CTotalVoltage& f_totalVoltage,
         periodics::CInstantConsumption& f_instantConsumption,
         periodics::CAlerts& f_alerts
     )
     : utils::CTask(f_period)
     , m_CKlmanager(f_CKlmanager)
-    , m_serial(f_serial)
+    , m_serialBroker(f_serialBroker)
     , m_totalVoltage(f_totalVoltage)
     , m_instantConsumption(f_instantConsumption)
     , m_alerts(f_alerts)
@@ -117,7 +117,7 @@ namespace periodics
                     bool_globalsV_warningFlag = !bool_globalsV_warningFlag;
 
                     snprintf(buffer, sizeof(buffer), "@warning:%hhu:%hhu:%hhu;;\r\n", h, m, s);
-                    m_serial.write(buffer, strlen(buffer));
+                    m_serialBroker.sendReliable(buffer, strlen(buffer));
 
                     m_alerts.alertsCommand("1",buffer);
                 }
@@ -134,7 +134,7 @@ namespace periodics
             if(m_shutdownCounter == counter_shutdown)
             {   
                 snprintf(buffer, sizeof(buffer), "@shutdown:ack;;\r\n");
-                m_serial.write(buffer, strlen(buffer));
+                m_serialBroker.sendReliable(buffer, strlen(buffer));
 
                 char buffer2[_1_char];
 

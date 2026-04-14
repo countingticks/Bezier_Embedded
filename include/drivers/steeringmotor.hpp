@@ -53,6 +53,7 @@ namespace drivers
             virtual int inRange(int f_angle) = 0 ;
             virtual int get_upper_limit() = 0 ;
             virtual int get_lower_limit() = 0 ;
+            virtual int getCommandedAngle() const = 0;
 
             int16_t pwm_value = 0;
     };
@@ -81,6 +82,7 @@ namespace drivers
             int inRange(int f_angle);
             int get_upper_limit();
             int get_lower_limit();
+            int getCommandedAngle() const;
         private:
             /** @brief PWM output pin */
             PwmOut m_pwm_pin;
@@ -93,6 +95,8 @@ namespace drivers
             const int m_inf_limit;
             /** @brief Superior limit */
             const int m_sup_limit;
+            /** @brief Last requested steering angle */
+            int m_commandedAngle;
 
             /* convert angle degree to duty cycle for pwm signal */
             int computePWMPolynomial(int steering); //angle to duty cycle

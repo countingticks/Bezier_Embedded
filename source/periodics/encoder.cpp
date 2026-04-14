@@ -120,13 +120,13 @@ namespace periodics
 
     CEncoder::CEncoder(
             std::chrono::milliseconds f_period,
-            UnbufferedSerial& f_serial,
+            drivers::CSerialTxBroker& f_serialBroker,
             PinName f_sdaPin,
             PinName f_sclPin
         )
         : utils::CTask(f_period)
         , m_i2c(f_sdaPin, f_sclPin)
-        , m_serial(f_serial)
+        , m_serialBroker(f_serialBroker)
         , m_isActive(false)
         , m_lastAngularSpeed(0.0f)
         , m_lastLinearSpeed(0.0f)
@@ -141,6 +141,7 @@ namespace periodics
         , m_lastRawAngleDegrees(0.0f)
         , m_unwrapRevolutions(0)
         , m_publishAccumulator(0.0f)
+        , m_missingMeasurementDuration(0.0f)
         , m_lastTimerUs(0)
         , m_totalDisplacement(0.0f)
         , m_hasDisplacementReference(false)
@@ -150,7 +151,7 @@ namespace periodics
         , m_hampelIndex(0U)
         , m_hampelCount(0U)
         , m_speedHysteresis(10.0f)
-        , m_reportInterval(0.02f)
+        , m_reportInterval(static_cast<float>(c_defaultReportIntervalMs) * 0.001f)
         , m_timer()
         , m_kalman()
     {
@@ -179,12 +180,22 @@ namespace periodics
             return;
         }
 
-        uint8_t l_isActivate = 0;
-        const uint8_t l_res = sscanf(a, "%hhu", &l_isActivate);
+        unsigned int l_isActivate = 0U;
+        unsigned int l_reportIntervalMs = c_defaultReportIntervalMs;
+        const int l_res = sscanf(a, "%u;%u", &l_isActivate, &l_reportIntervalMs);
 
-        if (1 == l_res)
+        if (l_res == 1 || l_res == 2)
         {
-            m_isActive = (l_isActivate >= 1);
+            if (l_res == 2)
+            {
+                if (l_reportIntervalMs < c_minReportIntervalMs)
+                {
+                    l_reportIntervalMs = c_minReportIntervalMs;
+                }
+                m_reportInterval = static_cast<float>(l_reportIntervalMs) * 0.001f;
+            }
+
+            m_isActive = (l_isActivate >= 1U);
             sprintf(b, "1");
         }
         else
@@ -300,39 +311,28 @@ namespace periodics
 
     float CEncoder::getTotalDisplacementDegrees()
     {
-        const float l_rawAngle = getRawAngleDegrees();
-
-        if (!m_hasDisplacementReference)
+        if (!m_timerStarted)
         {
-            m_lastDisplacementRawAngle = l_rawAngle;
-            m_hasDisplacementReference = true;
-            return m_totalDisplacement;
+            (void)readAngularSpeedKalman();
         }
-
-        float l_delta = l_rawAngle - m_lastDisplacementRawAngle;
-
-        if (l_delta > 180.0f)
-        {
-            l_delta -= 360.0f;
-        }
-        else if (l_delta < -180.0f)
-        {
-            l_delta += 360.0f;
-        }
-
-        m_totalDisplacement += l_delta;
-        m_lastDisplacementRawAngle = l_rawAngle;
-
         return m_totalDisplacement;
     }
 
     void CEncoder::resetTravelDistance()
     {
         m_totalDisplacement = 0.0f;
-        // Seed the displacement reference immediately so the first motion after
-        // reset is counted, instead of waiting for the next polling cycle.
-        m_lastDisplacementRawAngle = getRawAngleDegrees();
-        m_hasDisplacementReference = true;
+        if (m_timerStarted)
+        {
+            m_lastDisplacementRawAngle =
+                m_lastRawAngleDegrees +
+                (360.0f * static_cast<float>(m_unwrapRevolutions));
+            m_hasDisplacementReference = true;
+        }
+        else
+        {
+            m_lastDisplacementRawAngle = 0.0f;
+            m_hasDisplacementReference = false;
+        }
     }
 
     float CEncoder::getTravelDistanceMm()
@@ -367,6 +367,11 @@ namespace periodics
             float l_initialRawAngle = m_lastRawAngleDegrees;
             (void)readRawAngleDegrees(l_initialRawAngle);
             m_previousRawAngle = l_initialRawAngle;
+            if (!m_hasDisplacementReference)
+            {
+                m_lastDisplacementRawAngle = l_initialRawAngle;
+                m_hasDisplacementReference = true;
+            }
             return 0.0f;
         }
 
@@ -382,29 +387,52 @@ namespace periodics
         const bool l_hasMeasurement = readRawAngleDegrees(l_rawAngleDegrees);
         if (!l_hasMeasurement)
         {
+            m_missingMeasurementDuration += l_dt;
+            if (m_missingMeasurementDuration >= 0.12f)
+            {
+                m_lastAngularSpeed = 0.0f;
+                m_lastLinearSpeed = 0.0f;
+                m_kalman.speed = 0.0f;
+            }
             m_publishAccumulator += l_dt;
             return m_lastAngularSpeed;
         }
 
-        const float l_wrapDiff = l_rawAngleDegrees - m_previousRawAngle;
+        m_missingMeasurementDuration = 0.0f;
 
-        if (l_wrapDiff > 180.0f)
+        float l_deltaAngleDegrees = l_rawAngleDegrees - m_previousRawAngle;
+
+        if (l_deltaAngleDegrees > 180.0f)
         {
+            l_deltaAngleDegrees -= 360.0f;
             m_unwrapRevolutions--;
         }
-        else if (l_wrapDiff < -180.0f)
+        else if (l_deltaAngleDegrees < -180.0f)
         {
+            l_deltaAngleDegrees += 360.0f;
             m_unwrapRevolutions++;
         }
 
         m_previousRawAngle = l_rawAngleDegrees;
 
         const float l_measurementAngle = l_rawAngleDegrees + 360.0f * static_cast<float>(m_unwrapRevolutions);
+        const float l_rawSpeedDegPerSec = l_deltaAngleDegrees / l_dt;
+
+        if (!m_hasDisplacementReference)
+        {
+            m_lastDisplacementRawAngle = l_measurementAngle;
+            m_hasDisplacementReference = true;
+        }
+        else
+        {
+            m_totalDisplacement += (l_measurementAngle - m_lastDisplacementRawAngle);
+            m_lastDisplacementRawAngle = l_measurementAngle;
+        }
 
         m_kalman.predict(l_dt);
         m_kalman.update(l_measurementAngle);
 
-        float l_speedDegPerSec = applyHampel(m_kalman.speed);
+        float l_speedDegPerSec = applyHampel(0.5f * (m_kalman.speed + l_rawSpeedDegPerSec));
         l_speedDegPerSec = applySpeedHysteresis(l_speedDegPerSec);
 
         m_lastAngularSpeed = l_speedDegPerSec;
@@ -461,20 +489,11 @@ namespace periodics
 
     float CEncoder::applySpeedHysteresis(float f_speed)
     {
-        if (f_speed > m_lastAngularSpeed + m_speedHysteresis)
+        if (fabsf(f_speed) <= m_speedHysteresis)
         {
-            m_lastAngularSpeed = f_speed;
+            return 0.0f;
         }
-        else if (f_speed < m_lastAngularSpeed - m_speedHysteresis)
-        {
-            m_lastAngularSpeed = f_speed;
-        }
-        else
-        {
-            f_speed = m_lastAngularSpeed;
-        }
-
-        return m_lastAngularSpeed = f_speed;
+        return f_speed;
     }
 
     float CEncoder::convertAngularToLinear(float f_angularQuantity) const
@@ -493,7 +512,7 @@ namespace periodics
         const int l_speedMmPerSec = static_cast<int>(roundf(m_lastLinearSpeed));
 
         snprintf(l_buffer, sizeof(l_buffer), "@encoder:%d;;\r\n", l_speedMmPerSec);
-        m_serial.write(l_buffer, strlen(l_buffer));
+        m_serialBroker.publishLatest(drivers::CSerialTxBroker::TelemetryTopic::Encoder, l_buffer, strlen(l_buffer));
     }
 
     void CEncoder::_run()

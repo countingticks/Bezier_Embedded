@@ -31,6 +31,12 @@
 
 #include <drivers/serialmonitor.hpp>
 
+namespace
+{
+    static const size_t c_maxCharsPerRun = 128U;
+    static const size_t c_maxMessagesPerRun = 4U;
+}
+
 namespace drivers{
 
     /** @brief  CSerialMonitor class constructor
@@ -41,17 +47,17 @@ namespace drivers{
      */
     CSerialMonitor::CSerialMonitor(
             UnbufferedSerial& f_serialPort,
+            CSerialTxBroker& f_serialBroker,
             CSerialSubscriberMap f_serialSubscriberMap)
         :utils::CTask(std::chrono::milliseconds(0))
         , m_serialPort(f_serialPort)
+        , m_serialBroker(f_serialBroker)
         , m_RxBuffer()
-        , m_TxBuffer()
         , m_parseBuffer()
         , m_parseIt(m_parseBuffer.begin())
         , m_serialSubscriberMap(f_serialSubscriberMap) 
         {
             m_serialPort.attach(mbed::callback(this,&CSerialMonitor::serialRxCallback), SerialBase::RxIrq); 
-            // m_serialPort.attach(mbed::callback(this,&CSerialMonitor::serialTxCallback), SerialBase::TxIrq);
         }
 
     /** @brief  CSerialMonitor class destructor
@@ -75,20 +81,6 @@ namespace drivers{
         return;
     }
 
-    /** @brief  Tx callback actions
-     *  
-     */
-    void CSerialMonitor::serialTxCallback()
-    {
-        __disable_irq();
-        while ((m_serialPort.writeable()) && (!m_TxBuffer.isEmpty())) {
-            // m_serialPort.write(m_TxBuffer.pop(), 1);
-            m_serialPort.write("a", 1);
-        }
-        __enable_irq();
-        return;
-    }
-
     /** @brief  Monitoring function
      * 
      * It has role to monitor the received messaged, it applies periodically the read buffer content and decodes the message if present. 
@@ -97,9 +89,15 @@ namespace drivers{
      */
     void CSerialMonitor::_run()
     {
-        while ((!m_RxBuffer.isEmpty()))
+        size_t l_processedChars = 0U;
+        size_t l_processedMessages = 0U;
+
+        while ((!m_RxBuffer.isEmpty()) &&
+               (l_processedChars < c_maxCharsPerRun) &&
+               (l_processedMessages < c_maxMessagesPerRun))
         {
             char l_c = m_RxBuffer.pop(); // Read the next character from buffer
+            ++l_processedChars;
 
             if ('#' == l_c) // Message starting special character
             {
@@ -136,15 +134,23 @@ namespace drivers{
                                 if (strlen(l_resp) > 0)
                                 {
                                     snprintf(formattedResp, sizeof(formattedResp), "@%s:%s;;\r\n", l_msgID, l_resp);
-                                    m_serialPort.write(formattedResp,strlen(formattedResp)); // Create the response message
+                                    m_serialBroker.sendReliable(formattedResp, strlen(formattedResp));
                                 }
                                 
                                 // m_serialPort.write("@%s:%s\r\n",l_msgID,l_resp); // Create the response message
                             }
                         }
                         m_parseIt = m_parseBuffer.begin(); //Go to begining of parse buffer.
+                        ++l_processedMessages;
                     }
                 }
+
+                if (m_parseIt == m_parseBuffer.end())
+                {
+                    m_parseIt = m_parseBuffer.begin();
+                    continue;
+                }
+
                 m_parseIt[0] = l_c;
                 m_parseIt++;
                 continue;

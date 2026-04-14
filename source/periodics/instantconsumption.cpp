@@ -46,11 +46,11 @@ namespace periodics{
     CInstantConsumption::CInstantConsumption(
             std::chrono::milliseconds        f_period, 
             mbed::AnalogIn  f_pin, 
-            UnbufferedSerial&      f_serial) 
+            drivers::CSerialTxBroker& f_serialBroker) 
         : utils::CTask(f_period)
         , m_pin(f_pin)
         , m_isActive(false)
-        , m_serial(f_serial)
+        , m_serialBroker(f_serialBroker)
         , m_period(f_period.count())
     {
         
@@ -178,7 +178,7 @@ namespace periodics{
         char buffer[_24_chars];
 
         snprintf(buffer, sizeof(buffer), "@instant:%lu;;\r\n", currentEMA);
-        m_serial.write(buffer,strlen(buffer));
+        m_serialBroker.sendReliable(buffer, strlen(buffer));
     }
 
 }; // namespace periodics

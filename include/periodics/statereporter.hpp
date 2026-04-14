@@ -1,7 +1,7 @@
 /**
  * Copyright (c) 2019, Bosch Engineering Center Cluj and BFMC organizers
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
 
@@ -28,45 +28,49 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE
 */
 
-/* Inclusion guard */
-#ifndef TASK_HPP
-#define TASK_HPP
+#ifndef STATE_REPORTER_HPP
+#define STATE_REPORTER_HPP
 
 #include <mbed.h>
 #include <chrono>
+#include <drivers/serialtxbroker.hpp>
+#include <drivers/steeringmotor.hpp>
+#include <periodics/encoder.hpp>
+#include <periodics/imu.hpp>
+#include <utils/task.hpp>
 
-namespace utils
+namespace periodics
 {
-   /**
-    * @brief It aims to the task functionality. The tasks will be applied periodically by the task manager, the period is defined in the contructor. 
-    * 
-    */
-    class CTask
+    class CStateReporter : public utils::CTask
     {
         public:
-            /* Constructor */
-            CTask(
-                std::chrono::milliseconds f_period
+            CStateReporter(
+                std::chrono::milliseconds f_period,
+                drivers::CSerialTxBroker& f_serialBroker,
+                CEncoder& f_encoder,
+                CImu& f_imu,
+                drivers::ISteeringCommand& f_steeringControl
             );
-            /* Destructor */
-            virtual ~CTask();
-            /* Run method */
-            virtual void run(uint32_t f_tickCount);
-        protected:
-            /** @brief  main application logic - It's a pure function for application logic and has to override in the derivered class to implement the appl.*/
-            virtual void _run() = 0;
-            /** @brief  Set new period */
-            void setNewPeriod(uint16_t f_period);
-            /** @brief period of the task */
-            std::chrono::milliseconds m_period;
-            /** @brief period expressed in scheduler ticks */
-            uint32_t m_periodTicks;
-            /** @brief next tick when the task becomes runnable */
-            uint32_t m_nextReleaseTick;
-            /** @brief first release marker */
-            bool m_firstReleasePending;
-    }; // class CTask
+            ~CStateReporter();
 
-}; // namespace utils
+            void serialCallbackSTATEcommand(char const* a, char* b);
 
-#endif // TASK_HPP
+        private:
+            virtual void _run();
+            void publishState();
+
+            drivers::CSerialTxBroker& m_serialBroker;
+            CEncoder& m_encoder;
+            CImu& m_imu;
+            drivers::ISteeringCommand& m_steeringControl;
+            bool m_isActive;
+            uint32_t m_publishAccumulatorMs;
+            uint32_t m_reportIntervalMs;
+
+            static constexpr uint32_t c_defaultReportIntervalMs = 100U;
+            static constexpr uint32_t c_minReportIntervalMs = 100U;
+            static constexpr uint32_t c_maxReportIntervalMs = 150U;
+    };
+}
+
+#endif // STATE_REPORTER_HPP

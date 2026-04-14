@@ -35,6 +35,7 @@
 /* The mbed library */
 #include <mbed.h>
 /* Header file for the task manager library, which  applies periodically the fun function of it's children*/
+#include <drivers/serialtxbroker.hpp>
 #include <utils/task.hpp>
 #include <chrono>
 #include <cstddef>
@@ -67,7 +68,7 @@ namespace periodics
             /* Constructor */
             CEncoder(
                 std::chrono::milliseconds f_period,
-                UnbufferedSerial& f_serial,
+                drivers::CSerialTxBroker& f_serialBroker,
                 PinName f_sdaPin,
                 PinName f_sclPin
             );
@@ -103,7 +104,7 @@ namespace periodics
             /* AS5600 encoder on I2C */
             I2C m_i2c;
             /* @brief Serial communication obj.  */
-            UnbufferedSerial& m_serial;
+            drivers::CSerialTxBroker& m_serialBroker;
             /* @brief Active flag  */
             bool m_isActive;
             /* @brief Last published angular speed in deg/s */
@@ -128,6 +129,8 @@ namespace periodics
             int m_unwrapRevolutions;
             /* @brief Publish accumulator in seconds */
             float m_publishAccumulator;
+            /* @brief Consecutive time without a valid encoder sample */
+            float m_missingMeasurementDuration;
             /* @brief Last timer value in microseconds */
             std::chrono::microseconds::rep m_lastTimerUs;
             /* @brief Total displacement in degrees */
@@ -154,6 +157,8 @@ namespace periodics
             static constexpr char c_statusRegister = 0x0B;
             static constexpr char c_agcRegister = 0x1A;
             static constexpr char c_magnitudeHighRegister = 0x1B;
+            static constexpr uint32_t c_defaultReportIntervalMs = 250U;
+            static constexpr uint32_t c_minReportIntervalMs = 100U;
     }; // class CEncoder
 }; // namespace periodics
 

@@ -9,6 +9,8 @@
 
 #include <mbed.h>
 #include <chrono>
+#include <brain/mpccontroller.hpp>
+#include <drivers/serialtxbroker.hpp>
 #include <drivers/speedingmotor.hpp>
 #include <drivers/steeringmotor.hpp>
 #include <periodics/encoder.hpp>
@@ -18,45 +20,6 @@
 
 namespace brain
 {
-    struct PIDController
-    {
-        float kp;
-        float ki;
-        float kd;
-        float integral;
-        float previousError;
-        float integralLimit;
-        float outputLimit;
-        bool initialized;
-
-        PIDController(
-            float f_kp = 0.0f,
-            float f_ki = 0.0f,
-            float f_kd = 0.0f,
-            float f_integralLimit = 0.0f,
-            float f_outputLimit = 0.0f
-        )
-            : kp(f_kp)
-            , ki(f_ki)
-            , kd(f_kd)
-            , integral(0.0f)
-            , previousError(0.0f)
-            , integralLimit(f_integralLimit)
-            , outputLimit(f_outputLimit)
-            , initialized(false)
-        {
-        }
-
-        void reset()
-        {
-            integral = 0.0f;
-            previousError = 0.0f;
-            initialized = false;
-        }
-
-        float update(float error, float dt);
-    };
-
     /** @brief A single keyframe: target speed/steer reached at absolute time_ms. */
     struct MoveSegment
     {
@@ -71,14 +34,15 @@ namespace brain
 
     /** Max number of adaptive keyframes that can be queued. */
     static const uint16_t MAX_MOVES = 512;
-    static const uint32_t MOVE_PROGRESS_INTERVAL_MS = 50;
-
+    static const uint16_t MAX_DIRECTION_SEGMENTS = MAX_MOVES;
+    static const uint32_t MOVE_PROGRESS_INTERVAL_DEFAULT_MS = 50;
+    static const uint32_t MOVE_PROGRESS_INTERVAL_MIN_MS = 20;
     class CMovelistexecutor : public utils::CTask
     {
         public:
             CMovelistexecutor(
                 std::chrono::milliseconds   f_period,
-                UnbufferedSerial&           f_serialPort,
+                drivers::CSerialTxBroker&   f_serialBroker,
                 drivers::ISteeringCommand&  f_steeringControl,
                 drivers::ISpeedingCommand&  f_speedingControl,
                 periodics::CEncoder&        f_encoder,
@@ -105,7 +69,8 @@ namespace brain
                 float& steerFeedforward,
                 float& referenceXmm,
                 float& referenceYmm,
-                float& referenceHeadingRad
+                float& referenceHeadingRad,
+                float& referenceProgressMm
             );
             void interpolateCommandByProgress(
                 float progress_mm,
@@ -113,20 +78,81 @@ namespace brain
                 float& steerFeedforward,
                 float& referenceXmm,
                 float& referenceYmm,
-                float& referenceHeadingRad
+                float& referenceHeadingRad,
+                float& referenceProgressMm
             );
-            float estimateProgressAlongTrajectory() const;
+            float estimateProgressAlongTrajectory(
+                uint16_t directionSegmentIndex,
+                float& bestDistanceSquared,
+                bool& projectionValid,
+                uint16_t& projectedMoveIndex
+            );
             bool hasReachedGoal() const;
-            void updatePoseEstimate(float dt_s);
+            void updatePoseEstimate();
             void resetExecutionState(bool clearBuffer);
             void resetPoseEstimate();
+            void resetControllerState();
             void sendProgressUpdate();
+            void rebuildDirectionSegments();
+            bool getDirectionSegmentForMoveIndex(uint16_t moveIndex, uint16_t& directionSegmentIndex) const;
+            bool ensureActiveDirectionSegment(uint32_t elapsedMs, uint16_t& directionSegmentIndex);
+            void activateDirectionSegment(uint16_t directionSegmentIndex);
+            void fillMpcHorizon(
+                float progressSeedMm,
+                uint16_t directionSegmentIndex,
+                float currentSpeedFeedforwardMmS,
+                float currentSteerFeedforwardDeciDeg,
+                CMpcController::HorizonSample (&horizon)[CMpcController::c_horizonLength]
+            );
+            void fillMpcHorizonByProgress(
+                float progressMm,
+                uint16_t directionSegmentIndex,
+                float currentSpeedFeedforwardMmS,
+                float currentSteerFeedforwardDeciDeg,
+                CMpcController::HorizonSample (&horizon)[CMpcController::c_horizonLength]
+            );
+            CMpcController::Limits makeMpcLimits(int8_t direction, float referencePathSpeedMps) const;
+            bool getDynamicSegmentEndpoint(
+                uint16_t directionSegmentIndex,
+                uint16_t& endpointIndex,
+                uint32_t& endpointTimeMs,
+                float& endpointProgressMm
+            ) const;
+            uint16_t getMoveIndexForProgress(uint16_t directionSegmentIndex, float progressMm) const;
+            float getSegmentStartProgressMm(uint16_t directionSegmentIndex) const;
+            float getSegmentLimitProgressMm(uint16_t directionSegmentIndex) const;
+            uint16_t getProjectionSearchEndMoveIndex(uint16_t directionSegmentIndex, uint16_t acceptedMoveIndex) const;
+            float computeMatchedProgressMm(
+                uint16_t directionSegmentIndex,
+                float nominalProgressMm,
+                float rawProjectedProgressMm,
+                float projectedDistanceMm,
+                bool projectionValid,
+                uint16_t projectedMoveIndex
+            );
+            float computeHorizonSeedProgressMm(uint16_t directionSegmentIndex, float nominalProgressMm) const;
+            static int8_t classifyDirection(int16_t startSpeed, int16_t endSpeed);
+            float estimateProgressInRange(uint16_t startIndex, uint16_t endIndex, float& bestDistanceSquared, uint16_t& bestSegment) const;
+            uint16_t getCheckpointWindowEndMoveIndex(uint16_t directionSegmentIndex, uint16_t acceptedMoveIndex) const;
             static float clampFloat(float value, float minValue, float maxValue);
             static float wrapAngle(float angle);
             static float interpolateAngle(float startAngle, float endAngle, float alpha);
+            static float deciDegreesToRad(float deciDegrees);
+            static float millimetersToMeters(float millimeters);
             static uint32_t fnv1aMix(uint32_t checksum, uint32_t value, uint8_t byteCount);
 
-            UnbufferedSerial&           m_serialPort;
+            struct DirectionSegment
+            {
+                uint16_t start_index;
+                uint16_t end_index;
+                uint32_t time_start_ms;
+                uint32_t time_end_ms;
+                uint32_t progress_start_mm;
+                uint32_t progress_end_mm;
+                int8_t direction;
+            };
+
+            drivers::CSerialTxBroker&   m_serialBroker;
             drivers::ISteeringCommand&  m_steeringControl;
             drivers::ISpeedingCommand&  m_speedingControl;
             periodics::CEncoder&        m_encoder;
@@ -141,10 +167,23 @@ namespace brain
 
             bool     m_executing;
             uint16_t m_currentMove;
+            uint16_t m_projectionSegment;
+            uint16_t m_acceptedMoveIndex;
+            uint16_t m_projectedMoveIndex;
             uint32_t m_elapsedMs;
-            uint32_t m_period;
+            Kernel::Clock::time_point m_executionStartTime;
+            Kernel::Clock::time_point m_lastRunTime;
+            uint16_t m_directionSegmentCount;
+            uint16_t m_activeDirectionSegment;
+            uint32_t m_nextMpcSolveMs;
             uint32_t m_lastProgressReportMs;
+            uint32_t m_progressReportIntervalMs;
             uint32_t m_uploadChecksum;
+            uint32_t m_lastExecutorLoopDtMs;
+            uint32_t m_maxExecutorLoopDtMs;
+            uint32_t m_lastMpcSolveUs;
+            uint32_t m_maxMpcSolveUs;
+            uint32_t m_missedMpcSolveSlots;
 
             bool  m_poseReady;
             bool  m_headingInitialized;
@@ -152,17 +191,39 @@ namespace brain
             float m_poseXmm;
             float m_poseYmm;
             float m_poseHeadingRad;
+            float m_encoderTravelMm;
+            float m_lastTravelDeltaMm;
+            float m_odometryProgressMm;
             float m_referenceXmm;
             float m_referenceYmm;
             float m_referenceHeadingRad;
             float m_referenceProgressMm;
-            float m_estimatedProgressMm;
+            float m_rawProjectedProgressMm;
+            float m_matchedProgressMm;
+            float m_lastValidProjectedProgressMm;
             float m_relativeXErrorMm;
             float m_relativeYErrorMm;
             float m_headingErrorRad;
-            PIDController m_speedPid;
-            PIDController m_lateralPid;
-            float m_headingGain;
+            float m_mpcProgressErrorM;
+            float m_mpcLateralErrorM;
+            float m_mpcHeadingErrorRad;
+            float m_cachedPathCorrectionMps;
+            float m_cachedSteerCorrectionRad;
+            float m_lastNominalProgressMm;
+            float m_lastReferenceSpeedMmS;
+            float m_lastReferenceSteerDeciDeg;
+            float m_lastSpeedCorrectionMps;
+            float m_lastSteerCorrectionRad;
+            float m_lastPathSpeedCommandMps;
+            float m_lastSteerCommandRad;
+            CMpcController::SolverStatus m_lastMpcStatus;
+            uint16_t m_lastMpcIterations;
+            bool m_lastUsedPreviousCorrection;
+            bool m_lastUsedFeedforwardOnly;
+            bool m_projectionValid;
+            uint16_t m_projectionStaleCount;
+            CMpcController m_mpcController;
+            DirectionSegment m_directionSegments[MAX_DIRECTION_SEGMENTS];
             int16_t m_lastCommandedSpeed;
             int16_t m_lastCommandedSteer;
     };

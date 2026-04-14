@@ -38,6 +38,9 @@
 /* The mbed library */
 #include <mbed.h>
 #include <drivers/bno055.hpp>
+#include <drivers/serialtxbroker.hpp>
+#include <drivers/speedingmotor.hpp>
+#include <periodics/encoder.hpp>
 #include <utils/task.hpp>
 #include <brain/globalsv.hpp>
 #include <chrono>
@@ -55,7 +58,9 @@ namespace periodics
             /* Constructor */
             CImu(
                 std::chrono::milliseconds    f_period,
-                UnbufferedSerial& f_serial,
+                drivers::CSerialTxBroker& f_serialBroker,
+                CEncoder& f_encoder,
+                drivers::ISpeedingCommand& f_speedingControl,
                 PinName SDA,
                 PinName SCL
             );
@@ -99,17 +104,23 @@ namespace periodics
             /** @brief Active flag  */
             bool            m_isActive;
 
-            /* @brief Serial communication obj.  */
-            UnbufferedSerial&      m_serial;
-
-            s32 m_velocityX;
-            s32 m_velocityY;
-            s32 m_velocityZ;
-            uint8_t m_velocityStationaryCounter;
-            uint64_t m_delta_time;
-            uint8_t m_period;
+            /* @brief Serial communication broker. */
+            drivers::CSerialTxBroker& m_serialBroker;
+            CEncoder& m_encoder;
+            drivers::ISpeedingCommand& m_speedingControl;
+            float m_lastRollDegrees;
+            float m_lastPitchDegrees;
             float m_lastYawDegrees;
             bool m_hasValidYaw;
+            uint32_t m_sampleAccumulatorMs;
+            uint32_t m_publishAccumulatorMs;
+            uint32_t m_reportIntervalMs;
+
+            static constexpr uint32_t c_minTaskPeriodMs = 20U;
+            static constexpr uint32_t c_motionSamplePeriodMs = 20U;
+            static constexpr uint32_t c_idleSamplePeriodMs = 100U;
+            static constexpr uint32_t c_defaultReportIntervalMs = 250U;
+            static constexpr uint32_t c_minReportIntervalMs = 100U;
     }; // class CImu
 
 }; // namespace utils

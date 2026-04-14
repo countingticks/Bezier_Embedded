@@ -48,6 +48,9 @@ namespace utils{
         )
         : m_taskList(f_taskList)
         , m_taskCount(f_taskCount)
+        , m_baseFreq(f_baseFreq)
+        , m_tickCount(0U)
+        , m_lastDispatchedTick(0U)
     {
         m_ticker.attach(mbed::callback(this,&CTaskManager::timerCallback), f_baseFreq);
     }
@@ -63,19 +66,32 @@ namespace utils{
     /** @brief  The main callback method aims to apply the subtasks' run method. */
     void CTaskManager::mainCallback()
     {
+        const uint32_t l_tickCount = m_tickCount;
+        if (l_tickCount == m_lastDispatchedTick)
+        {
+            return;
+        }
+
+        m_lastDispatchedTick = l_tickCount;
+
         for(uint8_t i = 0; i < m_taskCount; i++)
         {
-            m_taskList[i]->run();
+            m_taskList[i]->run(l_tickCount);
+        }
+    }
+
+    void CTaskManager::waitForNextTick()
+    {
+        while (m_lastDispatchedTick == m_tickCount)
+        {
+            ThisThread::sleep_for(m_baseFreq);
         }
     }
 
     /** @brief  Timer callback method applies the subtasks' callback function. */
     void CTaskManager::timerCallback()
     {
-        for(uint8_t i = 0; i < m_taskCount; i++)
-        {
-            m_taskList[i]->timerCallback();
-        }
+        ++m_tickCount;
     }
 
 }; // namespace utils::task
