@@ -1,0 +1,5 @@
+- Prefer minimal diffs.
+- Change only the requested function or selected range.
+- Preserve formatting, comments, and import order unless correctness requires otherwise.
+- Do not refactor unrelated code.
+- Do not rewrite whole blocks when a local edit will do.

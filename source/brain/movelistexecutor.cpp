@@ -39,6 +39,7 @@ namespace
     static const float PROJECTION_REJOIN_ALIGNMENT_SLACK_MM = 20.0f;
     static const float PROJECTION_REJOIN_SPEED_HOLD_GAP_MM = 25.0f;
     static const uint16_t CHECKPOINT_FORWARD_WINDOW_SAMPLES = 5U;
+    static const uint16_t CHECKPOINT_BACKTRACK_WINDOW_SAMPLES = CHECKPOINT_FORWARD_WINDOW_SAMPLES;
     static const float CHECKPOINT_PROMOTION_TOLERANCE_MM = 5.0f;
     static const float MAX_PROGRESS_ADVANCE_PER_CYCLE_MM = 60.0f;
     static const uint32_t MPC_SAMPLE_PERIOD_MS = 50U;
@@ -573,10 +574,29 @@ namespace brain
                             segmentStartProgressMm,
                             segmentLimitProgressMm
                         );
-                        m_lastValidProjectedProgressMm =
-                            (clampedProjectedProgressMm > m_lastValidProjectedProgressMm) ?
-                            clampedProjectedProgressMm :
-                            m_lastValidProjectedProgressMm;
+                        const float previousProjectedProgressMm = clampFloat(
+                            m_rawProjectedProgressMm,
+                            segmentStartProgressMm,
+                            segmentLimitProgressMm
+                        );
+                        // Limit how quickly the geometric projection can move in either
+                        // direction so transient checkpoint mistakes do not create large
+                        // reference jumps in one control tick.
+                        const float projectedProgressLowerBoundMm = clampFloat(
+                            previousProjectedProgressMm - MAX_PROGRESS_ADVANCE_PER_CYCLE_MM,
+                            segmentStartProgressMm,
+                            segmentLimitProgressMm
+                        );
+                        const float projectedProgressUpperBoundMm = clampFloat(
+                            previousProjectedProgressMm + MAX_PROGRESS_ADVANCE_PER_CYCLE_MM,
+                            segmentStartProgressMm,
+                            segmentLimitProgressMm
+                        );
+                        m_lastValidProjectedProgressMm = clampFloat(
+                            clampedProjectedProgressMm,
+                            projectedProgressLowerBoundMm,
+                            projectedProgressUpperBoundMm
+                        );
                         m_rawProjectedProgressMm = m_lastValidProjectedProgressMm;
                         m_projectedMoveIndex = getMoveIndexForProgress(
                             directionSegmentIndex,
@@ -601,20 +621,6 @@ namespace brain
                         projectionValid,
                         m_projectedMoveIndex
                     );
-
-                    const float acceptedProgressMm = static_cast<float>(m_moves[m_acceptedMoveIndex].progress_mm);
-                    if (m_lastValidProjectedProgressMm < acceptedProgressMm)
-                    {
-                        m_lastValidProjectedProgressMm = acceptedProgressMm;
-                    }
-                    if (m_rawProjectedProgressMm < acceptedProgressMm)
-                    {
-                        m_rawProjectedProgressMm = acceptedProgressMm;
-                    }
-                    if (m_projectedMoveIndex < m_acceptedMoveIndex)
-                    {
-                        m_projectedMoveIndex = m_acceptedMoveIndex;
-                    }
 
                     if (projectionTrusted)
                     {
@@ -1056,10 +1062,19 @@ namespace brain
         {
             m_acceptedMoveIndex = searchEnd;
         }
+        uint16_t windowStart = m_acceptedMoveIndex;
+        if (windowStart > searchStart)
+        {
+            const uint16_t backtrackStart =
+                (windowStart > CHECKPOINT_BACKTRACK_WINDOW_SAMPLES) ?
+                static_cast<uint16_t>(windowStart - CHECKPOINT_BACKTRACK_WINDOW_SAMPLES) :
+                0U;
+            windowStart = (backtrackStart > searchStart) ? backtrackStart : searchStart;
+        }
         const uint16_t windowEnd = getProjectionSearchEndMoveIndex(directionSegmentIndex, m_acceptedMoveIndex);
         uint16_t bestSegment = m_acceptedMoveIndex;
         const float bestProgressMm = estimateProgressInRange(
-            m_acceptedMoveIndex,
+            windowStart,
             windowEnd,
             bestDistanceSquared,
             bestSegment
@@ -1639,6 +1654,7 @@ namespace brain
         uint16_t projectedMoveIndex
     )
     {
+        (void)projectedMoveIndex;
         const float segmentLimitProgressMm = getSegmentLimitProgressMm(directionSegmentIndex);
         if (m_moveCount == 0U)
         {
@@ -1656,7 +1672,6 @@ namespace brain
             directionSegmentIndex,
             m_acceptedMoveIndex
         );
-
         if (m_acceptedMoveIndex < segmentStartMoveIndex)
         {
             m_acceptedMoveIndex = segmentStartMoveIndex;
@@ -1665,104 +1680,39 @@ namespace brain
         {
             m_acceptedMoveIndex = checkpointWindowEndMoveIndex;
         }
-
-        const uint16_t projectedCheckpointMoveIndex =
-            (projectedMoveIndex < m_acceptedMoveIndex) ?
-            m_acceptedMoveIndex :
-            ((projectedMoveIndex > checkpointWindowEndMoveIndex) ?
-            checkpointWindowEndMoveIndex :
-            projectedMoveIndex);
-
-        float progressFloorMm = static_cast<float>(m_moves[m_acceptedMoveIndex].progress_mm);
+        const float checkpointFloorMm = static_cast<float>(m_moves[m_acceptedMoveIndex].progress_mm);
         float checkpointCeilingMm = segmentLimitProgressMm;
         if ((checkpointWindowEndMoveIndex + 1U) < m_moveCount)
         {
             checkpointCeilingMm = clampFloat(
                 static_cast<float>(m_moves[checkpointWindowEndMoveIndex + 1U].progress_mm),
-                progressFloorMm,
+                checkpointFloorMm,
                 segmentLimitProgressMm
             );
         }
-        const float initialCheckpointCeilingMm = checkpointCeilingMm;
-
-        float odometryProgressMm = clampFloat(
-            m_odometryProgressMm,
-            progressFloorMm,
-            checkpointCeilingMm
-        );
-        float projectedProgressMm = clampFloat(
-            rawProjectedProgressMm,
-            progressFloorMm,
-            checkpointCeilingMm
-        );
         const float cycleAdvanceCeilingMm = clampFloat(
             previousMatchedProgressMm + MAX_PROGRESS_ADVANCE_PER_CYCLE_MM,
-            progressFloorMm,
+            checkpointFloorMm,
             checkpointCeilingMm
         );
-
-        float promotionProgressMm = odometryProgressMm;
-        if (projectionValid)
-        {
-            const float projectedCheckpointProgressMm = clampFloat(
-                static_cast<float>(m_moves[projectedCheckpointMoveIndex].progress_mm),
-                progressFloorMm,
-                checkpointCeilingMm
-            );
-            if (projectedCheckpointProgressMm > promotionProgressMm)
-            {
-                promotionProgressMm = projectedCheckpointProgressMm;
-            }
-            if (projectedProgressMm > promotionProgressMm)
-            {
-                promotionProgressMm = projectedProgressMm;
-            }
-        }
-        promotionProgressMm = clampFloat(
-            promotionProgressMm,
-            progressFloorMm,
+        const float candidateFloorMm = clampFloat(
+            previousMatchedProgressMm,
+            checkpointFloorMm,
             cycleAdvanceCeilingMm
         );
 
-        while ((m_acceptedMoveIndex < checkpointWindowEndMoveIndex) &&
-               (static_cast<float>(m_moves[m_acceptedMoveIndex + 1U].progress_mm) <=
-                (promotionProgressMm + CHECKPOINT_PROMOTION_TOLERANCE_MM)))
-        {
-            m_acceptedMoveIndex++;
-        }
-
-        progressFloorMm = static_cast<float>(m_moves[m_acceptedMoveIndex].progress_mm);
-        const uint16_t refreshedCheckpointWindowEndMoveIndex = getCheckpointWindowEndMoveIndex(
-            directionSegmentIndex,
-            m_acceptedMoveIndex
-        );
-        checkpointCeilingMm = segmentLimitProgressMm;
-        if ((refreshedCheckpointWindowEndMoveIndex + 1U) < m_moveCount)
-        {
-            checkpointCeilingMm = clampFloat(
-                static_cast<float>(m_moves[refreshedCheckpointWindowEndMoveIndex + 1U].progress_mm),
-                progressFloorMm,
-                segmentLimitProgressMm
-            );
-        }
-        const float cycleCheckpointCeilingMm = clampFloat(
-            initialCheckpointCeilingMm,
-            progressFloorMm,
-            ((cycleAdvanceCeilingMm < checkpointCeilingMm) ? cycleAdvanceCeilingMm : checkpointCeilingMm)
-        );
-
-        odometryProgressMm = clampFloat(
+        float odometryProgressMm = clampFloat(
             m_odometryProgressMm,
-            progressFloorMm,
-            cycleCheckpointCeilingMm
+            checkpointFloorMm,
+            cycleAdvanceCeilingMm
         );
-        projectedProgressMm = clampFloat(
+        float projectedProgressMm = clampFloat(
             rawProjectedProgressMm,
-            progressFloorMm,
-            cycleCheckpointCeilingMm
+            checkpointFloorMm,
+            cycleAdvanceCeilingMm
         );
 
-        float candidateProgressMm = progressFloorMm;
+        float candidateProgressMm = candidateFloorMm;
         const bool projectionRejoinActive =
             projectionValid &&
             (m_projectionStaleCount > 0U);
@@ -1776,16 +1726,16 @@ namespace brain
         {
             const float odometryCeilingMm = clampFloat(
                 odometryProgressMm + PROGRESS_ODOMETRY_SLACK_MM,
-                progressFloorMm,
-                cycleCheckpointCeilingMm
+                candidateFloorMm,
+                cycleAdvanceCeilingMm
             );
             const float geometricAlignmentCeilingMm = clampFloat(
                 projectedProgressMm +
                 (projectionRejoinActive ?
                     PROJECTION_REJOIN_ALIGNMENT_SLACK_MM :
                     PROJECTION_PROGRESS_ALIGNMENT_TOLERANCE_MM),
-                progressFloorMm,
-                cycleCheckpointCeilingMm
+                candidateFloorMm,
+                cycleAdvanceCeilingMm
             );
             const float alignedCeilingMm =
                 (geometricAlignmentCeilingMm < odometryCeilingMm) ?
@@ -1795,7 +1745,7 @@ namespace brain
             candidateProgressMm = projectedProgressMm;
             if (odometryProgressMm > candidateProgressMm)
             {
-                candidateProgressMm = clampFloat(odometryProgressMm, progressFloorMm, alignedCeilingMm);
+                candidateProgressMm = clampFloat(odometryProgressMm, candidateFloorMm, alignedCeilingMm);
             }
         }
         else
@@ -1805,15 +1755,39 @@ namespace brain
 
         const float nominalLeadCeilingMm = clampFloat(
             nominalProgressMm + PROGRESS_NOMINAL_LEAD_LIMIT_MM,
-            progressFloorMm,
-            cycleCheckpointCeilingMm
+            candidateFloorMm,
+            cycleAdvanceCeilingMm
         );
-        if (candidateProgressMm > nominalLeadCeilingMm && nominalLeadCeilingMm > progressFloorMm)
+        if (candidateProgressMm > nominalLeadCeilingMm && nominalLeadCeilingMm > candidateFloorMm)
         {
             candidateProgressMm = nominalLeadCeilingMm;
         }
 
-        return clampFloat(candidateProgressMm, progressFloorMm, cycleCheckpointCeilingMm);
+        candidateProgressMm = clampFloat(
+            candidateProgressMm,
+            candidateFloorMm,
+            cycleAdvanceCeilingMm
+        );
+
+        // Advance the accepted checkpoint only after the continuous candidate is
+        // known, so the checkpoint cursor never drags the exported reference
+        // ahead of the trustworthy geometric/odometric estimate.
+        uint16_t promotionWindowEndMoveIndex = getCheckpointWindowEndMoveIndex(
+            directionSegmentIndex,
+            m_acceptedMoveIndex
+        );
+        while ((m_acceptedMoveIndex < promotionWindowEndMoveIndex) &&
+               (static_cast<float>(m_moves[m_acceptedMoveIndex + 1U].progress_mm) <=
+                (candidateProgressMm + CHECKPOINT_PROMOTION_TOLERANCE_MM)))
+        {
+            m_acceptedMoveIndex++;
+            promotionWindowEndMoveIndex = getCheckpointWindowEndMoveIndex(
+                directionSegmentIndex,
+                m_acceptedMoveIndex
+            );
+        }
+
+        return candidateProgressMm;
     }
 
     float CMovelistexecutor::computeHorizonSeedProgressMm(uint16_t directionSegmentIndex, float nominalProgressMm) const
