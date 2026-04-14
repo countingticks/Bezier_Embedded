@@ -51,12 +51,12 @@ namespace periodics
                 CImu& f_imu,
                 drivers::ISteeringCommand& f_steeringControl
             );
-            ~CStateReporter();
+            ~CStateReporter() = default;
 
             void serialCallbackSTATEcommand(char const* a, char* b);
 
         private:
-            virtual void _run();
+            void _run() override;
             void publishState();
 
             drivers::CSerialTxBroker& m_serialBroker;

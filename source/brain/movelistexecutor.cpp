@@ -13,6 +13,7 @@
  */
 
 #include <brain/movelistexecutor.hpp>
+#include <brain/globalsv.hpp>
 
 #include <cmath>
 #include <cstdio>
@@ -34,7 +35,6 @@ namespace
     static const float PROGRESS_NOMINAL_LEAD_LIMIT_MM = 40.0f;
     static const float PROGRESS_ODOMETRY_SLACK_MM = 40.0f;
     static const float PROJECTION_TRUST_DISTANCE_MM = 40.0f;
-    static const float PROJECTION_HARD_FREEZE_DISTANCE_MM = 120.0f;
     static const float PROJECTION_PROGRESS_ALIGNMENT_TOLERANCE_MM = 60.0f;
     static const float PROJECTION_REJOIN_ALIGNMENT_SLACK_MM = 20.0f;
     static const float PROJECTION_REJOIN_SPEED_HOLD_GAP_MM = 25.0f;
@@ -123,7 +123,6 @@ namespace brain
         , m_arrivalToleranceMm(0U)
         , m_executing(false)
         , m_currentMove(0U)
-        , m_projectionSegment(0U)
         , m_acceptedMoveIndex(0U)
         , m_projectedMoveIndex(0U)
         , m_elapsedMs(0U)
@@ -181,10 +180,6 @@ namespace brain
         , m_directionSegments()
         , m_lastCommandedSpeed(0)
         , m_lastCommandedSteer(0)
-    {
-    }
-
-    CMovelistexecutor::~CMovelistexecutor()
     {
     }
 
@@ -618,8 +613,7 @@ namespace brain
                         timeReferenceProgressMm,
                         m_rawProjectedProgressMm,
                         projectedDistanceMm,
-                        projectionValid,
-                        m_projectedMoveIndex
+                        projectionValid
                     );
 
                     if (projectionTrusted)
@@ -646,8 +640,6 @@ namespace brain
                     matchedReferenceHeadingRad,
                     matchedReferenceProgressMm
                 );
-                m_projectionSegment = m_currentMove;
-
                 m_referenceXmm = matchedReferenceXmm;
                 m_referenceYmm = matchedReferenceYmm;
                 m_referenceHeadingRad = matchedReferenceHeadingRad;
@@ -1083,7 +1075,6 @@ namespace brain
         const float relocalizeDistanceSquared = TRAJECTORY_RELOCALIZE_DISTANCE_MM * TRAJECTORY_RELOCALIZE_DISTANCE_MM;
         projectionValid = (bestDistanceSquared <= relocalizeDistanceSquared);
         projectedMoveIndex = projectionValid ? bestSegment : m_acceptedMoveIndex;
-        m_projectionSegment = projectedMoveIndex;
 
         if (!projectionValid)
         {
@@ -1154,7 +1145,6 @@ namespace brain
     {
         m_executing = false;
         m_currentMove = 0U;
-        m_projectionSegment = 0U;
         m_acceptedMoveIndex = 0U;
         m_projectedMoveIndex = 0U;
         m_elapsedMs = 0U;
@@ -1210,7 +1200,6 @@ namespace brain
         m_lastReferenceSteerDeciDeg = 0.0f;
         m_lastCommandedSpeed = 0;
         m_lastCommandedSteer = 0;
-        m_projectionSegment = 0U;
         m_acceptedMoveIndex = 0U;
         m_projectedMoveIndex = 0U;
         resetControllerState();
@@ -1395,38 +1384,6 @@ namespace brain
         finalSegment.direction = activeDirection;
     }
 
-    bool CMovelistexecutor::getDirectionSegmentForMoveIndex(uint16_t moveIndex, uint16_t& directionSegmentIndex) const
-    {
-        if (m_directionSegmentCount == 0U)
-        {
-            return false;
-        }
-
-        if (moveIndex >= m_moveCount)
-        {
-            moveIndex = static_cast<uint16_t>(m_moveCount - 1U);
-        }
-
-        if (moveIndex >= (m_moveCount - 1U))
-        {
-            directionSegmentIndex = static_cast<uint16_t>(m_directionSegmentCount - 1U);
-            return true;
-        }
-
-        for (uint16_t index = 0U; index < m_directionSegmentCount; index++)
-        {
-            const DirectionSegment& segment = m_directionSegments[index];
-            if (moveIndex >= segment.start_index && moveIndex < segment.end_index)
-            {
-                directionSegmentIndex = index;
-                return true;
-            }
-        }
-
-        directionSegmentIndex = static_cast<uint16_t>(m_directionSegmentCount - 1U);
-        return true;
-    }
-
     bool CMovelistexecutor::ensureActiveDirectionSegment(uint32_t elapsedMs, uint16_t& directionSegmentIndex)
     {
         if (m_directionSegmentCount == 0U)
@@ -1499,7 +1456,6 @@ namespace brain
         const float segmentLimitProgressMm = getSegmentLimitProgressMm(directionSegmentIndex);
 
         m_activeDirectionSegment = directionSegmentIndex;
-        m_projectionSegment = activeSegment.start_index;
         m_odometryProgressMm = clampFloat(m_odometryProgressMm, segmentStartProgressMm, segmentLimitProgressMm);
         m_rawProjectedProgressMm = clampFloat(m_rawProjectedProgressMm, segmentStartProgressMm, segmentLimitProgressMm);
         m_matchedProgressMm = clampFloat(
@@ -1650,11 +1606,9 @@ namespace brain
         float nominalProgressMm,
         float rawProjectedProgressMm,
         float projectedDistanceMm,
-        bool projectionValid,
-        uint16_t projectedMoveIndex
+        bool projectionValid
     )
     {
-        (void)projectedMoveIndex;
         const float segmentLimitProgressMm = getSegmentLimitProgressMm(directionSegmentIndex);
         if (m_moveCount == 0U)
         {
@@ -1865,23 +1819,6 @@ namespace brain
         }
 
         m_currentMove = savedCurrentMove;
-    }
-
-    void CMovelistexecutor::fillMpcHorizonByProgress(
-        float progressMm,
-        uint16_t directionSegmentIndex,
-        float currentSpeedFeedforwardMmS,
-        float currentSteerFeedforwardDeciDeg,
-        CMpcController::HorizonSample (&horizon)[CMpcController::c_horizonLength]
-    )
-    {
-        fillMpcHorizon(
-            progressMm,
-            directionSegmentIndex,
-            currentSpeedFeedforwardMmS,
-            currentSteerFeedforwardDeciDeg,
-            horizon
-        );
     }
 
     CMpcController::Limits CMovelistexecutor::makeMpcLimits(int8_t direction, float referencePathSpeedMps) const

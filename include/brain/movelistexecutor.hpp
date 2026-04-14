@@ -16,7 +16,6 @@
 #include <periodics/encoder.hpp>
 #include <periodics/imu.hpp>
 #include <utils/task.hpp>
-#include <brain/globalsv.hpp>
 
 namespace brain
 {
@@ -49,7 +48,7 @@ namespace brain
                 periodics::CImu&            f_imu
             );
 
-            ~CMovelistexecutor();
+            ~CMovelistexecutor() = default;
 
             /** Serial callback: append one absolute-time keyframe. */
             void serialCallbackMovesCommand(char const * message, char * response);
@@ -61,7 +60,7 @@ namespace brain
             void serialCallbackMoveStopCommand(char const * message, char * response);
 
         private:
-            virtual void _run();
+            void _run() override;
             void applyInterpolatedCommand(uint32_t elapsed_ms);
             void interpolateCommandByTime(
                 uint32_t elapsed_ms,
@@ -94,18 +93,10 @@ namespace brain
             void resetControllerState();
             void sendProgressUpdate();
             void rebuildDirectionSegments();
-            bool getDirectionSegmentForMoveIndex(uint16_t moveIndex, uint16_t& directionSegmentIndex) const;
             bool ensureActiveDirectionSegment(uint32_t elapsedMs, uint16_t& directionSegmentIndex);
             void activateDirectionSegment(uint16_t directionSegmentIndex);
             void fillMpcHorizon(
                 float progressSeedMm,
-                uint16_t directionSegmentIndex,
-                float currentSpeedFeedforwardMmS,
-                float currentSteerFeedforwardDeciDeg,
-                CMpcController::HorizonSample (&horizon)[CMpcController::c_horizonLength]
-            );
-            void fillMpcHorizonByProgress(
-                float progressMm,
                 uint16_t directionSegmentIndex,
                 float currentSpeedFeedforwardMmS,
                 float currentSteerFeedforwardDeciDeg,
@@ -127,8 +118,7 @@ namespace brain
                 float nominalProgressMm,
                 float rawProjectedProgressMm,
                 float projectedDistanceMm,
-                bool projectionValid,
-                uint16_t projectedMoveIndex
+                bool projectionValid
             );
             float computeHorizonSeedProgressMm(uint16_t directionSegmentIndex, float nominalProgressMm) const;
             static int8_t classifyDirection(int16_t startSpeed, int16_t endSpeed);
@@ -167,7 +157,6 @@ namespace brain
 
             bool     m_executing;
             uint16_t m_currentMove;
-            uint16_t m_projectionSegment;
             uint16_t m_acceptedMoveIndex;
             uint16_t m_projectedMoveIndex;
             uint32_t m_elapsedMs;

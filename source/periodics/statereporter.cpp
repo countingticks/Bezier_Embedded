@@ -66,10 +66,6 @@ namespace periodics
     {
     }
 
-    CStateReporter::~CStateReporter()
-    {
-    }
-
     void CStateReporter::serialCallbackSTATEcommand(char const* a, char* b)
     {
         unsigned int l_isActivate = 0U;
