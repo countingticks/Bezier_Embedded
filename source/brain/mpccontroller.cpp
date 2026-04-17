@@ -86,6 +86,8 @@ namespace brain
         , status(SolverStatus::Disabled)
         , used_previous_correction(false)
         , used_feedforward_only(true)
+        , speed_rate_limited(false)
+        , steer_rate_limited(false)
         , success(false)
     {
     }
@@ -874,16 +876,24 @@ namespace brain
         Output output;
 
         const float currentVRefPathMps = fabsf(f_input.current.v_body_mps);
+        const float unclampedPathSpeedCmd = currentVRefPathMps + f_vCorrMps;
+        const float unclampedSteerCmd = f_input.current.delta_ff_rad + f_deltaCorrRad;
         const float pathSpeedCmd = clampFloat(
-            currentVRefPathMps + f_vCorrMps,
+            unclampedPathSpeedCmd,
             f_input.limits.path_speed_min_mps,
             f_input.limits.path_speed_max_mps
         );
         const float steerCmd = clampFloat(
-            f_input.current.delta_ff_rad + f_deltaCorrRad,
+            unclampedSteerCmd,
             f_input.limits.steer_min_rad,
             f_input.limits.steer_max_rad
         );
+        const float maxDeltaSpeed = c_sampleTimeS * f_input.limits.speed_rate_max_mps2;
+        const float maxDeltaSteer = c_sampleTimeS * f_input.limits.steer_rate_max_rad_s;
+        const float desiredSpeedStep = unclampedPathSpeedCmd - f_input.prev_path_speed_cmd_mps;
+        const float desiredSteerStep = unclampedSteerCmd - f_input.prev_steer_cmd_rad;
+        const float limitedSpeedStep = clampFloat(desiredSpeedStep, -maxDeltaSpeed, maxDeltaSpeed);
+        const float limitedSteerStep = clampFloat(desiredSteerStep, -maxDeltaSteer, maxDeltaSteer);
 
         output.v_corr_mps = pathSpeedCmd - currentVRefPathMps;
         output.delta_corr_rad = steerCmd - f_input.current.delta_ff_rad;
@@ -899,6 +909,8 @@ namespace brain
         output.status = f_status;
         output.used_previous_correction = f_usedPreviousCorrection;
         output.used_feedforward_only = f_usedFeedforwardOnly;
+        output.speed_rate_limited = (fabsf(limitedSpeedStep - desiredSpeedStep) > 1e-4f);
+        output.steer_rate_limited = (fabsf(limitedSteerStep - desiredSteerStep) > 1e-4f);
         output.success = (f_status == SolverStatus::Success);
         return output;
     }

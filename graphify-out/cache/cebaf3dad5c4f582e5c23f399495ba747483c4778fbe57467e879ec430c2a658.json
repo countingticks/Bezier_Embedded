@@ -1,0 +1,1 @@
+{"nodes": [{"id": "source_utils_queue_cpp", "label": "queue.cpp", "file_type": "code", "source_file": "source\\utils\\queue.cpp", "source_location": "L1"}], "edges": [{"source": "source_utils_queue_cpp", "target": "queue", "relation": "imports", "confidence": "EXTRACTED", "source_file": "source\\utils\\queue.cpp", "source_location": "L32", "weight": 1.0}], "raw_calls": []}

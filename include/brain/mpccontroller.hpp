@@ -115,6 +115,8 @@ namespace brain
                 SolverStatus status;
                 bool used_previous_correction;
                 bool used_feedforward_only;
+                bool speed_rate_limited;
+                bool steer_rate_limited;
                 bool success;
 
                 Output();

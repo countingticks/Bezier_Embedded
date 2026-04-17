@@ -1,0 +1,10 @@
+# .graphifyignore
+vendor/
+node_modules/
+dist/
+*.generated.py
+.mbedbuild
+cmake_build/*
+!cmake_build/NUCLEO_F401RE/develop/GCC_ARM/robot_car.bin
+mbed-os/
+.vscode

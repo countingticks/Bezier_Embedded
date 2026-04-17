@@ -36,12 +36,20 @@
 #include <cstring>
 
 #define PI_FLOAT 3.14159265358979323846
-#define WHEEL_DIAMETER 67.0f
 #define MIN_HAMPEL_THRESHOLD 0.5f
 #define HAMPEL_K 3.0f
+#define MAX_ENCODER_ANGULAR_SPEED_DEG_PER_SEC 12000.0f
+#define MAX_ENCODER_STEP_MARGIN_DEG 20.0f
 
 namespace
 {
+    constexpr float c_piFloat = 3.14159265358979323846f;
+    constexpr float c_wheelDiameterMm = 67.0f;
+    constexpr float c_motorShaftRatio = 62.0f / 24.0f;
+    constexpr float c_shaftDiffRatio = 34.0f / 11.0f;
+    constexpr float c_encoderDistanceScale = 1.0f;
+    constexpr float c_wheelCircumferenceMm = c_wheelDiameterMm * c_piFloat;
+    constexpr float c_totalGearRatio = c_motorShaftRatio * c_shaftDiffRatio;
     constexpr uint8_t c_statusMagnetDetectedMask = 1U << 5;
     constexpr uint8_t c_statusMagnetTooWeakMask = 1U << 4;
     constexpr uint8_t c_statusMagnetTooStrongMask = 1U << 3;
@@ -401,15 +409,31 @@ namespace periodics
         m_missingMeasurementDuration = 0.0f;
 
         float l_deltaAngleDegrees = l_rawAngleDegrees - m_previousRawAngle;
+        const float l_rawDeltaAngleDegrees = l_deltaAngleDegrees;
 
         if (l_deltaAngleDegrees > 180.0f)
         {
             l_deltaAngleDegrees -= 360.0f;
-            m_unwrapRevolutions--;
         }
         else if (l_deltaAngleDegrees < -180.0f)
         {
             l_deltaAngleDegrees += 360.0f;
+        }
+
+        const float l_maxAcceptedDeltaDegrees =
+            (MAX_ENCODER_ANGULAR_SPEED_DEG_PER_SEC * l_dt) + MAX_ENCODER_STEP_MARGIN_DEG;
+        if (fabsf(l_deltaAngleDegrees) > l_maxAcceptedDeltaDegrees)
+        {
+            m_publishAccumulator += l_dt;
+            return m_lastAngularSpeed;
+        }
+
+        if (l_rawDeltaAngleDegrees > 180.0f)
+        {
+            m_unwrapRevolutions--;
+        }
+        else if (l_rawDeltaAngleDegrees < -180.0f)
+        {
             m_unwrapRevolutions++;
         }
 
@@ -498,12 +522,9 @@ namespace periodics
 
     float CEncoder::convertAngularToLinear(float f_angularQuantity) const
     {
-        const float l_motorShaftRatio = 62.0f / 24.0f;
-        const float l_shaftDiffRatio = 34.0f / 11.0f;
-        const float l_wheelCircumference = WHEEL_DIAMETER * PI_FLOAT;
-        const float l_gearRatio = l_motorShaftRatio * l_shaftDiffRatio;
-
-        return (f_angularQuantity * l_wheelCircumference) / (360.0f * l_gearRatio);
+        return
+            c_encoderDistanceScale *
+            ((f_angularQuantity * c_wheelCircumferenceMm) / (360.0f * c_totalGearRatio));
     }
 
     void CEncoder::publishSpeed()

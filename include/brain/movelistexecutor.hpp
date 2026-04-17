@@ -59,6 +59,37 @@ namespace brain
             /** Serial callback: abort execution immediately and clear the queue. */
             void serialCallbackMoveStopCommand(char const * message, char * response);
 
+            struct ExecutorPoseSnapshot
+            {
+                float x_mm;
+                float y_mm;
+                float heading_rad;
+                float matched_progress_mm;
+                float raw_projected_progress_mm;
+                float odometry_progress_mm;
+                uint32_t seq;
+                bool valid;
+                bool executing;
+
+                ExecutorPoseSnapshot()
+                    : x_mm(0.0f)
+                    , y_mm(0.0f)
+                    , heading_rad(0.0f)
+                    , matched_progress_mm(0.0f)
+                    , raw_projected_progress_mm(0.0f)
+                    , odometry_progress_mm(0.0f)
+                    , seq(0U)
+                    , valid(false)
+                    , executing(false)
+                {
+                }
+            };
+
+            ExecutorPoseSnapshot getPoseSnapshot() const
+            {
+                return m_poseSnapshot;
+            }
+
         private:
             void _run() override;
             void applyInterpolatedCommand(uint32_t elapsed_ms);
@@ -88,6 +119,7 @@ namespace brain
             );
             bool hasReachedGoal() const;
             void updatePoseEstimate();
+            void refreshPoseSnapshot();
             void resetExecutionState(bool clearBuffer);
             void resetPoseEstimate();
             void resetControllerState();
@@ -96,6 +128,7 @@ namespace brain
             bool ensureActiveDirectionSegment(uint32_t elapsedMs, uint16_t& directionSegmentIndex);
             void activateDirectionSegment(uint16_t directionSegmentIndex);
             void fillMpcHorizon(
+                uint32_t elapsedMs,
                 float progressSeedMm,
                 uint16_t directionSegmentIndex,
                 float currentSpeedFeedforwardMmS,
@@ -173,10 +206,16 @@ namespace brain
             uint32_t m_lastMpcSolveUs;
             uint32_t m_maxMpcSolveUs;
             uint32_t m_missedMpcSolveSlots;
+            uint32_t m_poseSnapshotSeq;
+            uint32_t m_reverseTravelCount;
+            uint32_t m_yawJumpCount;
+            uint32_t m_lastHorizonSeedTimeMs;
 
             bool  m_poseReady;
             bool  m_headingInitialized;
-            float m_initialYawDeg;
+            float m_lastYawDeg;
+            float m_lastImuYawDeg;
+            float m_accumulatedYawDeltaRad;
             float m_poseXmm;
             float m_poseYmm;
             float m_poseHeadingRad;
@@ -201,20 +240,34 @@ namespace brain
             float m_lastNominalProgressMm;
             float m_lastReferenceSpeedMmS;
             float m_lastReferenceSteerDeciDeg;
+            float m_lastReferenceCurvatureInvM;
+            float m_lastHorizonSeedProgressMm;
+            float m_lastHorizonReferenceSpeedMmS;
+            float m_lastHorizonReferenceSteerDeciDeg;
+            float m_lastPreClampCommandSpeedMmS;
+            float m_lastPreClampCommandSteerDeciDeg;
             float m_lastSpeedCorrectionMps;
             float m_lastSteerCorrectionRad;
             float m_lastPathSpeedCommandMps;
             float m_lastSteerCommandRad;
+            float m_lastMpcObjective;
+            float m_lastMpcMaxConstraintViolation;
             CMpcController::SolverStatus m_lastMpcStatus;
             uint16_t m_lastMpcIterations;
+            uint16_t m_lastReferenceSegmentIndex;
             bool m_lastUsedPreviousCorrection;
             bool m_lastUsedFeedforwardOnly;
+            bool m_lastSpeedSaturated;
+            bool m_lastSteerSaturated;
+            bool m_lastSpeedRateLimited;
+            bool m_lastSteerRateLimited;
             bool m_projectionValid;
             uint16_t m_projectionStaleCount;
             CMpcController m_mpcController;
             DirectionSegment m_directionSegments[MAX_DIRECTION_SEGMENTS];
             int16_t m_lastCommandedSpeed;
             int16_t m_lastCommandedSteer;
+            ExecutorPoseSnapshot m_poseSnapshot;
     };
 };
 

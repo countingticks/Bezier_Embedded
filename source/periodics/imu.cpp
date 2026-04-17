@@ -38,6 +38,23 @@
 #define BNO055_EULER_DIV_DEG_int        16
 #define BNO055_LINEAR_ACCEL_DIV_MSQ_int 100
 #define precision_scaling_factor        1000
+#define MAX_ACCEPTED_YAW_STEP_DEG       25.0f
+
+namespace
+{
+    float wrapDegrees(float f_angleDegrees)
+    {
+        while (f_angleDegrees > 180.0f)
+        {
+            f_angleDegrees -= 360.0f;
+        }
+        while (f_angleDegrees < -180.0f)
+        {
+            f_angleDegrees += 360.0f;
+        }
+        return f_angleDegrees;
+    }
+}
 
 namespace periodics{
     /** \brief  Class constructor
@@ -756,10 +773,20 @@ namespace periodics{
         const s32 s32_euler_h_deg = (s16_euler_h_raw * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
         const s32 s32_euler_p_deg = (s16_euler_p_raw * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
         const s32 s32_euler_r_deg = (s16_euler_r_raw * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
+        const float l_yawDegrees = static_cast<float>(s32_euler_h_deg) / 1000.0f;
+
+        if (m_hasValidYaw)
+        {
+            const float l_yawStepDegrees = wrapDegrees(l_yawDegrees - m_lastYawDegrees);
+            if (fabsf(l_yawStepDegrees) > MAX_ACCEPTED_YAW_STEP_DEG)
+            {
+                return;
+            }
+        }
 
         m_lastRollDegrees = static_cast<float>(s32_euler_r_deg) / 1000.0f;
         m_lastPitchDegrees = static_cast<float>(s32_euler_p_deg) / 1000.0f;
-        m_lastYawDegrees = static_cast<float>(s32_euler_h_deg) / 1000.0f;
+        m_lastYawDegrees = l_yawDegrees;
         m_hasValidYaw = true;
 
         if (!m_isActive)
