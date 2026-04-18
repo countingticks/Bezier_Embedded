@@ -100,6 +100,7 @@ namespace
 
         return (value - startValue) / (endValue - startValue);
     }
+
 }
 
 namespace brain
@@ -155,6 +156,7 @@ namespace brain
         , m_poseYmm(0.0f)
         , m_poseHeadingRad(START_HEADING_RAD)
         , m_encoderTravelMm(0.0f)
+        , m_lastEncoderTravelDeltaMm(0.0f)
         , m_lastTravelDeltaMm(0.0f)
         , m_odometryProgressMm(0.0f)
         , m_referenceXmm(0.0f)
@@ -173,6 +175,7 @@ namespace brain
         , m_cachedPathCorrectionMps(0.0f)
         , m_cachedSteerCorrectionRad(0.0f)
         , m_lastNominalProgressMm(0.0f)
+        , m_lastTrustedTravelSpeedMmS(0.0f)
         , m_lastReferenceSpeedMmS(0.0f)
         , m_lastReferenceSteerDeciDeg(0.0f)
         , m_lastReferenceCurvatureInvM(0.0f)
@@ -547,7 +550,7 @@ namespace brain
                     if (activeSegment.direction != 0)
                     {
                         const float directedTravelMm =
-                            m_lastTravelDeltaMm * static_cast<float>(activeSegment.direction);
+                            m_lastEncoderTravelDeltaMm * static_cast<float>(activeSegment.direction);
                         if (directedTravelMm > 0.0f)
                         {
                             m_odometryProgressMm += directedTravelMm;
@@ -665,14 +668,26 @@ namespace brain
                 telemetryReferenceSpeedMmS = matchedSpeedFeedforward;
                 telemetryReferenceSteerDeciDeg = matchedSteerFeedforward;
 
+                const int8_t trackingDirection =
+                    (directionSegmentIndex != INVALID_DIRECTION_SEGMENT) ?
+                    m_directionSegments[directionSegmentIndex].direction :
+                    ((matchedSpeedFeedforward < -0.5f) ? -1 : 1);
+                const float poseTrackingHeadingRad =
+                    (trackingDirection < 0) ?
+                    wrapAngle(m_poseHeadingRad + PI_FLOAT) :
+                    m_poseHeadingRad;
+                const float referenceTrackingHeadingRad =
+                    (trackingDirection < 0) ?
+                    wrapAngle(m_referenceHeadingRad + PI_FLOAT) :
+                    m_referenceHeadingRad;
                 const float dx = m_referenceXmm - m_poseXmm;
                 const float dy = m_referenceYmm - m_poseYmm;
-                const float cosHeading = cosf(m_poseHeadingRad);
-                const float sinHeading = sinf(m_poseHeadingRad);
+                const float cosHeading = cosf(poseTrackingHeadingRad);
+                const float sinHeading = sinf(poseTrackingHeadingRad);
 
                 m_relativeXErrorMm = (dx * cosHeading) + (dy * sinHeading);
                 m_relativeYErrorMm = (-dx * sinHeading) + (dy * cosHeading);
-                m_headingErrorRad = wrapAngle(m_referenceHeadingRad - m_poseHeadingRad);
+                m_headingErrorRad = wrapAngle(referenceTrackingHeadingRad - poseTrackingHeadingRad);
             }
         }
 
@@ -727,6 +742,10 @@ namespace brain
                     (direction < 0) ?
                     wrapAngle(m_referenceHeadingRad + PI_FLOAT) :
                     m_referenceHeadingRad;
+                const float poseTravelHeadingRad =
+                    (direction < 0) ?
+                    wrapAngle(m_poseHeadingRad + PI_FLOAT) :
+                    m_poseHeadingRad;
 
                 const float poseDeltaXM = millimetersToMeters(m_poseXmm - m_referenceXmm);
                 const float poseDeltaYM = millimetersToMeters(m_poseYmm - m_referenceYmm);
@@ -735,7 +754,7 @@ namespace brain
 
                 m_mpcProgressErrorM = millimetersToMeters(m_referenceProgressMm - timeReferenceProgressMm);
                 m_mpcLateralErrorM = (-sinTheta * poseDeltaXM) + (cosTheta * poseDeltaYM);
-                m_mpcHeadingErrorRad = wrapAngle(m_poseHeadingRad - thetaReferenceRad);
+                m_mpcHeadingErrorRad = wrapAngle(poseTravelHeadingRad - thetaReferenceRad);
                 const CMpcController::Limits limits = makeMpcLimits(direction, vRefPathMps);
 
                 if (mpcSlotDue)
@@ -762,7 +781,7 @@ namespace brain
                     mpcInput.pose.valid = true;
                     mpcInput.pose.x_m = millimetersToMeters(m_poseXmm);
                     mpcInput.pose.y_m = millimetersToMeters(m_poseYmm);
-                    mpcInput.pose.psi_rad = m_poseHeadingRad;
+                    mpcInput.pose.psi_rad = poseTravelHeadingRad;
                     mpcInput.current.matched_progress_m = millimetersToMeters(m_referenceProgressMm);
                     mpcInput.current.nominal_progress_m = millimetersToMeters(timeReferenceProgressMm);
                     mpcInput.current.x_m = millimetersToMeters(m_referenceXmm);
@@ -851,10 +870,15 @@ namespace brain
             float launchSpeed = launchFeedforwardSpeed;
             if (fabsf(launchSpeed) < STARTUP_MIN_EFFECTIVE_SPEED_MM_S)
             {
+                const float fallbackLaunchDirection =
+                    ((directionSegmentIndex != INVALID_DIRECTION_SEGMENT) &&
+                     (m_directionSegments[directionSegmentIndex].direction != 0)) ?
+                    static_cast<float>(m_directionSegments[directionSegmentIndex].direction) :
+                    ((m_moves[m_moveCount - 1U].speed < 0) ? -1.0f : 1.0f);
                 const float launchDirection =
                     (launchSpeed < -0.5f) ? -1.0f :
                     ((launchSpeed > 0.5f) ? 1.0f :
-                    ((m_moves[m_moveCount - 1U].speed < 0) ? -1.0f : 1.0f));
+                    fallbackLaunchDirection);
                 launchSpeed = launchDirection * STARTUP_MIN_EFFECTIVE_SPEED_MM_S;
             }
 
@@ -1206,6 +1230,7 @@ namespace brain
 
     void CMovelistexecutor::updatePoseEstimate()
     {
+        m_lastEncoderTravelDeltaMm = 0.0f;
         m_lastTravelDeltaMm = 0.0f;
 
         const float startHeadingRad =
@@ -1245,6 +1270,8 @@ namespace brain
         const float encoderTravelMm = m_encoder.getTravelDistanceMm();
         const float travelDeltaMm = encoderTravelMm - m_encoderTravelMm;
         m_encoderTravelMm = encoderTravelMm;
+        m_lastEncoderTravelDeltaMm = travelDeltaMm;
+        const float measuredSpeedMmPerSec = m_encoder.getLinearSpeed();
 
         float filteredTravelDeltaMm = travelDeltaMm;
         int8_t expectedTravelDirection = 0;
@@ -1259,7 +1286,6 @@ namespace brain
 
         if (expectedTravelDirection == 0)
         {
-            const float measuredSpeedMmPerSec = m_encoder.getLinearSpeed();
             if (fabsf(measuredSpeedMmPerSec) >= MIN_TRAVEL_DIRECTION_CONFIDENCE_MM_S)
             {
                 expectedTravelDirection = (measuredSpeedMmPerSec > 0.0f) ? 1 : -1;
@@ -1268,6 +1294,11 @@ namespace brain
             {
                 expectedTravelDirection = (m_lastCommandedSpeed > 0) ? 1 : -1;
             }
+        }
+        if ((expectedTravelDirection != 0) &&
+            ((measuredSpeedMmPerSec * static_cast<float>(expectedTravelDirection)) > MIN_TRAVEL_DIRECTION_CONFIDENCE_MM_S))
+        {
+            m_lastTrustedTravelSpeedMmS = measuredSpeedMmPerSec;
         }
 
         if ((expectedTravelDirection != 0) &&
@@ -1279,15 +1310,33 @@ namespace brain
             }
             else
             {
-                return;
+                float fallbackTravelDeltaMm = 0.0f;
+                if ((m_lastExecutorLoopDtMs > 0U) &&
+                    ((m_lastTrustedTravelSpeedMmS * static_cast<float>(expectedTravelDirection)) >
+                     MIN_TRAVEL_DIRECTION_CONFIDENCE_MM_S))
+                {
+                    fallbackTravelDeltaMm =
+                        fabsf(m_lastTrustedTravelSpeedMmS) *
+                        (static_cast<float>(m_lastExecutorLoopDtMs) / 1000.0f);
+                }
+
+                if (fallbackTravelDeltaMm > 0.0f)
+                {
+                    filteredTravelDeltaMm = static_cast<float>(expectedTravelDirection) * fallbackTravelDeltaMm;
+                }
+                else
+                {
+                    filteredTravelDeltaMm = 0.0f;
+                }
             }
         }
 
-        m_lastTravelDeltaMm = filteredTravelDeltaMm;
+        const float localizationDeltaMm = filteredTravelDeltaMm;
+        m_lastTravelDeltaMm = localizationDeltaMm;
 
         const float translationHeadingRad = interpolateAngle(previousPoseHeadingRad, m_poseHeadingRad, 0.5f);
-        m_poseXmm += filteredTravelDeltaMm * cosf(translationHeadingRad);
-        m_poseYmm += filteredTravelDeltaMm * sinf(translationHeadingRad);
+        m_poseXmm += localizationDeltaMm * cosf(translationHeadingRad);
+        m_poseYmm += localizationDeltaMm * sinf(translationHeadingRad);
     }
 
     void CMovelistexecutor::refreshPoseSnapshot()
@@ -1355,6 +1404,7 @@ namespace brain
         m_poseHeadingRad = startHeadingRad;
         m_encoder.resetTravelDistance();
         m_encoderTravelMm = 0.0f;
+        m_lastEncoderTravelDeltaMm = 0.0f;
         m_lastTravelDeltaMm = 0.0f;
         m_odometryProgressMm = startProgressMm;
         m_referenceXmm = startXmm;
@@ -1368,6 +1418,7 @@ namespace brain
         m_relativeYErrorMm = 0.0f;
         m_headingErrorRad = 0.0f;
         m_lastNominalProgressMm = startProgressMm;
+        m_lastTrustedTravelSpeedMmS = 0.0f;
         m_lastReferenceSpeedMmS = 0.0f;
         m_lastReferenceSteerDeciDeg = 0.0f;
         m_lastCommandedSpeed = 0;
@@ -1450,7 +1501,7 @@ namespace brain
             );
             const int32_t rawProjectedProgressMm = roundToInt32(poseSnapshot.raw_projected_progress_mm);
             const int32_t odometryProgressMm = roundToInt32(poseSnapshot.odometry_progress_mm);
-            const int32_t travelDeltaMm = roundToInt32(m_lastTravelDeltaMm);
+            const int32_t travelDeltaMm = roundToInt32(m_lastEncoderTravelDeltaMm);
             const int32_t encoderTravelMm = roundToInt32(m_encoderTravelMm);
             const int32_t encoderDisplacementMdeg = roundToInt32(m_encoder.getTotalDisplacementDegrees() * 1000.0f);
             const int16_t imuYawMrad = roundToInt16(m_lastImuYawDeg * (PI_FLOAT * 1000.0f / 180.0f));
@@ -1855,6 +1906,25 @@ namespace brain
         {
             segmentStartMoveIndex = m_directionSegments[directionSegmentIndex].start_index;
         }
+        const float segmentStartProgressMm = static_cast<float>(m_moves[segmentStartMoveIndex].progress_mm);
+        const float rawOdometryProgressMm = clampFloat(
+            m_odometryProgressMm,
+            segmentStartProgressMm,
+            segmentLimitProgressMm
+        );
+        float alignedMatchedFloorMm = previousMatchedProgressMm;
+        if (previousMatchedProgressMm > (rawOdometryProgressMm + PROJECTION_PROGRESS_ALIGNMENT_TOLERANCE_MM))
+        {
+            alignedMatchedFloorMm = rawOdometryProgressMm + PROJECTION_PROGRESS_ALIGNMENT_TOLERANCE_MM;
+            const uint16_t alignedMoveIndex = getMoveIndexForProgress(
+                directionSegmentIndex,
+                alignedMatchedFloorMm
+            );
+            if (alignedMoveIndex < m_acceptedMoveIndex)
+            {
+                m_acceptedMoveIndex = alignedMoveIndex;
+            }
+        }
 
         const uint16_t checkpointWindowEndMoveIndex = getCheckpointWindowEndMoveIndex(
             directionSegmentIndex,
@@ -1878,13 +1948,29 @@ namespace brain
                 segmentLimitProgressMm
             );
         }
-        const float cycleAdvanceCeilingMm = clampFloat(
+        float cycleAdvanceCeilingMm = clampFloat(
             previousMatchedProgressMm + MAX_PROGRESS_ADVANCE_PER_CYCLE_MM,
             checkpointFloorMm,
             checkpointCeilingMm
         );
+        if (projectionValid &&
+            (projectedDistanceMm <= TRAJECTORY_RELOCALIZE_DISTANCE_MM))
+        {
+            // Once the geometric projection is valid, allow matched progress to
+            // rejoin it in the same cycle instead of staying artificially pinned
+            // behind a stale odometry estimate.
+            const float projectedCatchupCeilingMm = clampFloat(
+                rawProjectedProgressMm,
+                checkpointFloorMm,
+                checkpointCeilingMm
+            );
+            if (projectedCatchupCeilingMm > cycleAdvanceCeilingMm)
+            {
+                cycleAdvanceCeilingMm = projectedCatchupCeilingMm;
+            }
+        }
         const float candidateFloorMm = clampFloat(
-            previousMatchedProgressMm,
+            alignedMatchedFloorMm,
             checkpointFloorMm,
             cycleAdvanceCeilingMm
         );
@@ -1899,18 +1985,31 @@ namespace brain
             projectionValid &&
             (projectedDistanceMm <= PROJECTION_TRUST_DISTANCE_MM);
         const float odometryProgressMm = clampFloat(
-            m_odometryProgressMm,
+            rawOdometryProgressMm,
             candidateFloorMm,
             cycleAdvanceCeilingMm
         );
         const bool projectionLaggingOdometry =
             projectedProgressMm + PROJECTION_RESEED_PROGRESS_GAP_MM < odometryProgressMm;
+        const bool projectionLeadingOdometry =
+            projectedProgressMm > (odometryProgressMm + PROJECTION_PROGRESS_ALIGNMENT_TOLERANCE_MM);
 
         float candidateProgressMm = candidateFloorMm;
         if (projectionValid &&
             (projectedDistanceMm <= TRAJECTORY_RELOCALIZE_DISTANCE_MM))
         {
             candidateProgressMm = projectedProgressMm;
+            if (projectionLeadingOdometry)
+            {
+                // When the closest-point projection snaps ahead during a path
+                // rejoin, keep matched progress anchored near odometry until
+                // the two progress estimates converge again.
+                candidateProgressMm = clampFloat(
+                    odometryProgressMm + PROJECTION_PROGRESS_ALIGNMENT_TOLERANCE_MM,
+                    candidateFloorMm,
+                    cycleAdvanceCeilingMm
+                );
+            }
         }
         // If the geometric match goes stale behind the car, keep the exported
         // progress moving forward with odometry instead of freezing the
@@ -1929,6 +2028,28 @@ namespace brain
         if (candidateProgressMm > nominalLeadCeilingMm && nominalLeadCeilingMm > candidateFloorMm)
         {
             candidateProgressMm = nominalLeadCeilingMm;
+        }
+
+        if ((directionSegmentIndex + 1U) == m_directionSegmentCount)
+        {
+            const MoveSegment& finalFrame = m_moves[m_moveCount - 1U];
+            const float goalToleranceMm =
+                (m_arrivalToleranceMm > 0U) ?
+                static_cast<float>(m_arrivalToleranceMm) :
+                PROJECTION_PROGRESS_ALIGNMENT_TOLERANCE_MM;
+            const float goalDx = static_cast<float>(finalFrame.ref_x_mm) - m_poseXmm;
+            const float goalDy = static_cast<float>(finalFrame.ref_y_mm) - m_poseYmm;
+            const float goalDistanceMm = sqrtf((goalDx * goalDx) + (goalDy * goalDy));
+            const float remainingProgressFloorMm = fmaxf(0.0f, goalDistanceMm - goalToleranceMm);
+            const float terminalGoalCapMm = clampFloat(
+                static_cast<float>(finalFrame.progress_mm) - remainingProgressFloorMm,
+                candidateFloorMm,
+                cycleAdvanceCeilingMm
+            );
+            if (candidateProgressMm > terminalGoalCapMm)
+            {
+                candidateProgressMm = terminalGoalCapMm;
+            }
         }
 
         candidateProgressMm = clampFloat(

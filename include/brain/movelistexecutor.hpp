@@ -220,6 +220,7 @@ namespace brain
             float m_poseYmm;
             float m_poseHeadingRad;
             float m_encoderTravelMm;
+            float m_lastEncoderTravelDeltaMm;
             float m_lastTravelDeltaMm;
             float m_odometryProgressMm;
             float m_referenceXmm;
@@ -238,6 +239,7 @@ namespace brain
             float m_cachedPathCorrectionMps;
             float m_cachedSteerCorrectionRad;
             float m_lastNominalProgressMm;
+            float m_lastTrustedTravelSpeedMmS;
             float m_lastReferenceSpeedMmS;
             float m_lastReferenceSteerDeciDeg;
             float m_lastReferenceCurvatureInvM;

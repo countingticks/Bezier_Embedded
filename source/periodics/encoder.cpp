@@ -323,6 +323,7 @@ namespace periodics
         {
             (void)readAngularSpeedKalman();
         }
+
         return m_totalDisplacement;
     }
 
@@ -441,7 +442,6 @@ namespace periodics
 
         const float l_measurementAngle = l_rawAngleDegrees + 360.0f * static_cast<float>(m_unwrapRevolutions);
         const float l_rawSpeedDegPerSec = l_deltaAngleDegrees / l_dt;
-
         if (!m_hasDisplacementReference)
         {
             m_lastDisplacementRawAngle = l_measurementAngle;
@@ -458,7 +458,6 @@ namespace periodics
 
         float l_speedDegPerSec = applyHampel(0.5f * (m_kalman.speed + l_rawSpeedDegPerSec));
         l_speedDegPerSec = applySpeedHysteresis(l_speedDegPerSec);
-
         m_lastAngularSpeed = l_speedDegPerSec;
         m_lastLinearSpeed = convertAngularToLinear(l_speedDegPerSec);
 
