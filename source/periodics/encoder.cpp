@@ -40,6 +40,7 @@
 #define HAMPEL_K 3.0f
 #define MAX_ENCODER_ANGULAR_SPEED_DEG_PER_SEC 12000.0f
 #define MAX_ENCODER_STEP_MARGIN_DEG 20.0f
+#define MIN_ENCODER_DIRECTION_HINT_DEG_PER_SEC 300.0f
 
 namespace
 {
@@ -150,6 +151,9 @@ namespace periodics
         , m_unwrapRevolutions(0)
         , m_publishAccumulator(0.0f)
         , m_missingMeasurementDuration(0.0f)
+        , m_rejectedMeasurementCount(0U)
+        , m_lastRejectedDeltaDegrees(0.0f)
+        , m_lastRejectedLimitDegrees(0.0f)
         , m_lastTimerUs(0)
         , m_totalDisplacement(0.0f)
         , m_hasDisplacementReference(false)
@@ -330,6 +334,10 @@ namespace periodics
     void CEncoder::resetTravelDistance()
     {
         m_totalDisplacement = 0.0f;
+        m_missingMeasurementDuration = 0.0f;
+        m_rejectedMeasurementCount = 0U;
+        m_lastRejectedDeltaDegrees = 0.0f;
+        m_lastRejectedLimitDegrees = 0.0f;
         if (m_timerStarted)
         {
             m_lastDisplacementRawAngle =
@@ -357,6 +365,26 @@ namespace periodics
         }
 
         return m_lastLinearSpeed;
+    }
+
+    uint32_t CEncoder::getRejectedMeasurementCount() const
+    {
+        return m_rejectedMeasurementCount;
+    }
+
+    float CEncoder::getLastRejectedDeltaDegrees() const
+    {
+        return m_lastRejectedDeltaDegrees;
+    }
+
+    float CEncoder::getLastRejectedLimitDegrees() const
+    {
+        return m_lastRejectedLimitDegrees;
+    }
+
+    uint32_t CEncoder::getMissingMeasurementDurationMs() const
+    {
+        return static_cast<uint32_t>(roundf(m_missingMeasurementDuration * 1000.0f));
     }
 
     float CEncoder::readAngularSpeedKalman()
@@ -409,38 +437,77 @@ namespace periodics
 
         m_missingMeasurementDuration = 0.0f;
 
-        float l_deltaAngleDegrees = l_rawAngleDegrees - m_previousRawAngle;
-        const float l_rawDeltaAngleDegrees = l_deltaAngleDegrees;
-
-        if (l_deltaAngleDegrees > 180.0f)
-        {
-            l_deltaAngleDegrees -= 360.0f;
-        }
-        else if (l_deltaAngleDegrees < -180.0f)
-        {
-            l_deltaAngleDegrees += 360.0f;
-        }
-
+        const float l_rawDeltaAngleDegrees = l_rawAngleDegrees - m_previousRawAngle;
         const float l_maxAcceptedDeltaDegrees =
             (MAX_ENCODER_ANGULAR_SPEED_DEG_PER_SEC * l_dt) + MAX_ENCODER_STEP_MARGIN_DEG;
+        float l_deltaAngleDegrees = l_rawDeltaAngleDegrees;
+        float l_bestDeltaScore = 0.0f;
+        bool l_hasBestDelta = false;
+        const bool l_hasDirectionHint = fabsf(m_lastAngularSpeed) >= MIN_ENCODER_DIRECTION_HINT_DEG_PER_SEC;
+        const float l_predictedDeltaDegrees = l_hasDirectionHint ? (m_lastAngularSpeed * l_dt) : 0.0f;
+        // A delayed sample can alias the wrap direction; prefer the candidate
+        // that stays consistent with the recent angular motion.
+        const float l_deltaCandidates[3] = {
+            l_rawDeltaAngleDegrees,
+            l_rawDeltaAngleDegrees + 360.0f,
+            l_rawDeltaAngleDegrees - 360.0f
+        };
+
+        for (size_t i = 0U; i < 3U; ++i)
+        {
+            const float l_candidateDeltaDegrees = l_deltaCandidates[i];
+            if (fabsf(l_candidateDeltaDegrees) > l_maxAcceptedDeltaDegrees)
+            {
+                continue;
+            }
+
+            if (l_hasDirectionHint &&
+                ((l_candidateDeltaDegrees * l_predictedDeltaDegrees) < 0.0f))
+            {
+                continue;
+            }
+
+            const float l_candidateScore = l_hasDirectionHint ?
+                fabsf(l_candidateDeltaDegrees - l_predictedDeltaDegrees) :
+                fabsf(l_candidateDeltaDegrees);
+
+            if (!l_hasBestDelta || (l_candidateScore < l_bestDeltaScore))
+            {
+                l_deltaAngleDegrees = l_candidateDeltaDegrees;
+                l_bestDeltaScore = l_candidateScore;
+                l_hasBestDelta = true;
+            }
+        }
+
+        if (!l_hasBestDelta)
+        {
+            if (l_deltaAngleDegrees > 180.0f)
+            {
+                l_deltaAngleDegrees -= 360.0f;
+            }
+            else if (l_deltaAngleDegrees < -180.0f)
+            {
+                l_deltaAngleDegrees += 360.0f;
+            }
+        }
+
         if (fabsf(l_deltaAngleDegrees) > l_maxAcceptedDeltaDegrees)
         {
+            if (m_rejectedMeasurementCount < 0xFFFFFFFFU)
+            {
+                ++m_rejectedMeasurementCount;
+            }
+            m_lastRejectedDeltaDegrees = fabsf(l_deltaAngleDegrees);
+            m_lastRejectedLimitDegrees = l_maxAcceptedDeltaDegrees;
             m_publishAccumulator += l_dt;
             return m_lastAngularSpeed;
         }
 
-        if (l_rawDeltaAngleDegrees > 180.0f)
-        {
-            m_unwrapRevolutions--;
-        }
-        else if (l_rawDeltaAngleDegrees < -180.0f)
-        {
-            m_unwrapRevolutions++;
-        }
-
+        const float l_previousMeasurementAngle =
+            m_previousRawAngle + (360.0f * static_cast<float>(m_unwrapRevolutions));
+        const float l_measurementAngle = l_previousMeasurementAngle + l_deltaAngleDegrees;
+        m_unwrapRevolutions = static_cast<int>(roundf((l_measurementAngle - l_rawAngleDegrees) / 360.0f));
         m_previousRawAngle = l_rawAngleDegrees;
-
-        const float l_measurementAngle = l_rawAngleDegrees + 360.0f * static_cast<float>(m_unwrapRevolutions);
         const float l_rawSpeedDegPerSec = l_deltaAngleDegrees / l_dt;
         if (!m_hasDisplacementReference)
         {

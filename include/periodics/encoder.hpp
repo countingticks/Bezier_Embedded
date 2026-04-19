@@ -83,6 +83,10 @@ namespace periodics
             void resetTravelDistance();
             float getTravelDistanceMm();
             float getLinearSpeed();
+            uint32_t getRejectedMeasurementCount() const;
+            float getLastRejectedDeltaDegrees() const;
+            float getLastRejectedLimitDegrees() const;
+            uint32_t getMissingMeasurementDurationMs() const;
 
         private:
             /* Run method */
@@ -131,6 +135,10 @@ namespace periodics
             float m_publishAccumulator;
             /* @brief Consecutive time without a valid encoder sample */
             float m_missingMeasurementDuration;
+            /* @brief Rejected-sample diagnostics */
+            uint32_t m_rejectedMeasurementCount;
+            float m_lastRejectedDeltaDegrees;
+            float m_lastRejectedLimitDegrees;
             /* @brief Last timer value in microseconds */
             std::chrono::microseconds::rep m_lastTimerUs;
             /* @brief Total displacement in degrees */

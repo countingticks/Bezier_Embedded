@@ -158,6 +158,8 @@ namespace brain
         , m_encoderTravelMm(0.0f)
         , m_lastEncoderTravelDeltaMm(0.0f)
         , m_lastTravelDeltaMm(0.0f)
+        , m_reportTravelDeltaMm(0.0f)
+        , m_reportedEncoderTravelMm(0.0f)
         , m_odometryProgressMm(0.0f)
         , m_referenceXmm(0.0f)
         , m_referenceYmm(0.0f)
@@ -187,6 +189,7 @@ namespace brain
         , m_lastSpeedCorrectionMps(0.0f)
         , m_lastSteerCorrectionRad(0.0f)
         , m_lastPathSpeedCommandMps(0.0f)
+        , m_lastPathSpeedLimitMps(0.0f)
         , m_lastSteerCommandRad(0.0f)
         , m_lastMpcObjective(0.0f)
         , m_lastMpcMaxConstraintViolation(0.0f)
@@ -195,12 +198,14 @@ namespace brain
         , m_lastReferenceSegmentIndex(INVALID_DIRECTION_SEGMENT)
         , m_lastUsedPreviousCorrection(false)
         , m_lastUsedFeedforwardOnly(true)
+        , m_lastCheckpointRecoveryHold(false)
         , m_lastSpeedSaturated(false)
         , m_lastSteerSaturated(false)
         , m_lastSpeedRateLimited(false)
         , m_lastSteerRateLimited(false)
         , m_projectionValid(false)
         , m_projectionStaleCount(0U)
+        , m_lastRecoverySeverityPermille(0U)
         , m_mpcController()
         , m_directionSegments()
         , m_lastCommandedSpeed(0)
@@ -550,7 +555,7 @@ namespace brain
                     if (activeSegment.direction != 0)
                     {
                         const float directedTravelMm =
-                            m_lastEncoderTravelDeltaMm * static_cast<float>(activeSegment.direction);
+                            m_lastTravelDeltaMm * static_cast<float>(activeSegment.direction);
                         if (directedTravelMm > 0.0f)
                         {
                             m_odometryProgressMm += directedTravelMm;
@@ -704,6 +709,9 @@ namespace brain
         m_lastHorizonSeedProgressMm = m_referenceProgressMm;
         m_lastHorizonReferenceSpeedMmS = matchedSpeedFeedforward;
         m_lastHorizonReferenceSteerDeciDeg = matchedSteerFeedforward;
+        m_lastPathSpeedLimitMps = fabsf(millimetersToMeters(matchedSpeedFeedforward));
+        m_lastCheckpointRecoveryHold = false;
+        m_lastRecoverySeverityPermille = 0U;
 
         if (directionSegmentIndex != INVALID_DIRECTION_SEGMENT)
         {
@@ -1333,6 +1341,8 @@ namespace brain
 
         const float localizationDeltaMm = filteredTravelDeltaMm;
         m_lastTravelDeltaMm = localizationDeltaMm;
+        m_reportTravelDeltaMm += localizationDeltaMm;
+        m_reportedEncoderTravelMm += fabsf(localizationDeltaMm);
 
         const float translationHeadingRad = interpolateAngle(previousPoseHeadingRad, m_poseHeadingRad, 0.5f);
         m_poseXmm += localizationDeltaMm * cosf(translationHeadingRad);
@@ -1406,6 +1416,8 @@ namespace brain
         m_encoderTravelMm = 0.0f;
         m_lastEncoderTravelDeltaMm = 0.0f;
         m_lastTravelDeltaMm = 0.0f;
+        m_reportTravelDeltaMm = 0.0f;
+        m_reportedEncoderTravelMm = 0.0f;
         m_odometryProgressMm = startProgressMm;
         m_referenceXmm = startXmm;
         m_referenceYmm = startYmm;
@@ -1456,6 +1468,7 @@ namespace brain
         m_lastSpeedCorrectionMps = 0.0f;
         m_lastSteerCorrectionRad = 0.0f;
         m_lastPathSpeedCommandMps = 0.0f;
+        m_lastPathSpeedLimitMps = 0.0f;
         m_lastSteerCommandRad = 0.0f;
         m_lastMpcObjective = 0.0f;
         m_lastMpcMaxConstraintViolation = 0.0f;
@@ -1464,12 +1477,14 @@ namespace brain
         m_lastReferenceSegmentIndex = INVALID_DIRECTION_SEGMENT;
         m_lastUsedPreviousCorrection = false;
         m_lastUsedFeedforwardOnly = true;
+        m_lastCheckpointRecoveryHold = false;
         m_lastSpeedSaturated = false;
         m_lastSteerSaturated = false;
         m_lastSpeedRateLimited = false;
         m_lastSteerRateLimited = false;
         m_projectionValid = false;
         m_projectionStaleCount = 0U;
+        m_lastRecoverySeverityPermille = 0U;
         m_mpcController.reset();
     }
 
@@ -1501,8 +1516,8 @@ namespace brain
             );
             const int32_t rawProjectedProgressMm = roundToInt32(poseSnapshot.raw_projected_progress_mm);
             const int32_t odometryProgressMm = roundToInt32(poseSnapshot.odometry_progress_mm);
-            const int32_t travelDeltaMm = roundToInt32(m_lastEncoderTravelDeltaMm);
-            const int32_t encoderTravelMm = roundToInt32(m_encoderTravelMm);
+            const int32_t travelDeltaMm = roundToInt32(m_reportTravelDeltaMm);
+            const int32_t encoderTravelMm = roundToInt32(m_reportedEncoderTravelMm);
             const int32_t encoderDisplacementMdeg = roundToInt32(m_encoder.getTotalDisplacementDegrees() * 1000.0f);
             const int16_t imuYawMrad = roundToInt16(m_lastImuYawDeg * (PI_FLOAT * 1000.0f / 180.0f));
             const int32_t referenceCurvatureMilliInvM = roundToInt32(m_lastReferenceCurvatureInvM * 1000.0f);
@@ -1515,18 +1530,18 @@ namespace brain
             const int32_t mpcMaxConstraintViolationMicro = roundToInt32(
                 m_lastMpcMaxConstraintViolation * 1000000.0f
             );
-            const uint32_t moveProgressOverwriteCount = m_serialBroker.getOverwriteCount(
-                drivers::CSerialTxBroker::TelemetryTopic::MoveProgress
+            const uint32_t pathSpeedLimitMmS = static_cast<uint32_t>(roundf(m_lastPathSpeedLimitMps * 1000.0f));
+            const uint32_t recoverySeverityPermille = static_cast<uint32_t>(m_lastRecoverySeverityPermille);
+            const uint32_t checkpointRecoveryHold =
+                m_lastCheckpointRecoveryHold ? 1U : 0U;
+            const uint32_t encoderRejectedMeasurements = m_encoder.getRejectedMeasurementCount();
+            const uint32_t encoderRejectedDeltaMdeg = static_cast<uint32_t>(
+                roundf(m_encoder.getLastRejectedDeltaDegrees() * 1000.0f)
             );
-            const uint32_t stateOverwriteCount = m_serialBroker.getOverwriteCount(
-                drivers::CSerialTxBroker::TelemetryTopic::State
+            const uint32_t encoderRejectedLimitMdeg = static_cast<uint32_t>(
+                roundf(m_encoder.getLastRejectedLimitDegrees() * 1000.0f)
             );
-            const uint32_t imuOverwriteCount = m_serialBroker.getOverwriteCount(
-                drivers::CSerialTxBroker::TelemetryTopic::Imu
-            );
-            const uint32_t encoderOverwriteCount = m_serialBroker.getOverwriteCount(
-                drivers::CSerialTxBroker::TelemetryTopic::Encoder
-            );
+            const uint32_t encoderMissingMeasurementMs = m_encoder.getMissingMeasurementDurationMs();
 
             int length = snprintf(
                 buffer,
@@ -1563,13 +1578,13 @@ namespace brain
                 static_cast<unsigned long>(m_lastMpcSolveUs),
                 static_cast<unsigned long>(m_maxMpcSolveUs),
                 static_cast<unsigned long>(m_missedMpcSolveSlots),
-                static_cast<unsigned long>(moveProgressOverwriteCount),
-                static_cast<unsigned long>(stateOverwriteCount),
-                static_cast<unsigned long>(imuOverwriteCount),
-                static_cast<unsigned long>(encoderOverwriteCount),
-                static_cast<unsigned long>(poseSnapshot.seq),
-                static_cast<unsigned long>(m_reverseTravelCount),
-                static_cast<unsigned long>(m_yawJumpCount)
+                static_cast<unsigned long>(pathSpeedLimitMmS),
+                static_cast<unsigned long>(recoverySeverityPermille),
+                static_cast<unsigned long>(checkpointRecoveryHold),
+                static_cast<unsigned long>(encoderRejectedMeasurements),
+                static_cast<unsigned long>(encoderRejectedDeltaMdeg),
+                static_cast<unsigned long>(encoderRejectedLimitMdeg),
+                static_cast<unsigned long>(encoderMissingMeasurementMs)
             );
             if (length > 0 && static_cast<size_t>(length) < sizeof(buffer))
             {
@@ -1610,6 +1625,7 @@ namespace brain
         }
 
         m_serialBroker.publishLatest(drivers::CSerialTxBroker::TelemetryTopic::MoveProgress, buffer, strlen(buffer));
+        m_reportTravelDeltaMm = 0.0f;
         m_maxExecutorLoopDtMs = m_lastExecutorLoopDtMs;
         m_maxMpcSolveUs = m_lastMpcSolveUs;
     }
@@ -2169,7 +2185,7 @@ namespace brain
         m_currentMove = savedCurrentMove;
     }
 
-    CMpcController::Limits CMovelistexecutor::makeMpcLimits(int8_t direction, float referencePathSpeedMps) const
+    CMpcController::Limits CMovelistexecutor::makeMpcLimits(int8_t direction, float referencePathSpeedMps)
     {
         CMpcController::Limits limits;
         const float actuatorForwardLimitMps = millimetersToMeters(static_cast<float>(m_speedingControl.get_upper_limit()));
@@ -2243,6 +2259,11 @@ namespace brain
             adaptiveSpeedLimitMps,
             limits.path_speed_min_mps,
             actuatorSpeedLimitMps
+        );
+        m_lastPathSpeedLimitMps = limits.path_speed_max_mps;
+        m_lastCheckpointRecoveryHold = checkpointRecoveryHold;
+        m_lastRecoverySeverityPermille = static_cast<uint16_t>(
+            roundToInt32(clampFloat(recoverySeverity, 0.0f, 1.0f) * 1000.0f)
         );
 
         const float actuatorSteerMinRad = deciDegreesToRad(static_cast<float>(m_steeringControl.get_lower_limit()));

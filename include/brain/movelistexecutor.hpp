@@ -135,7 +135,7 @@ namespace brain
                 float currentSteerFeedforwardDeciDeg,
                 CMpcController::HorizonSample (&horizon)[CMpcController::c_horizonLength]
             );
-            CMpcController::Limits makeMpcLimits(int8_t direction, float referencePathSpeedMps) const;
+            CMpcController::Limits makeMpcLimits(int8_t direction, float referencePathSpeedMps);
             bool getDynamicSegmentEndpoint(
                 uint16_t directionSegmentIndex,
                 uint16_t& endpointIndex,
@@ -222,6 +222,8 @@ namespace brain
             float m_encoderTravelMm;
             float m_lastEncoderTravelDeltaMm;
             float m_lastTravelDeltaMm;
+            float m_reportTravelDeltaMm;
+            float m_reportedEncoderTravelMm;
             float m_odometryProgressMm;
             float m_referenceXmm;
             float m_referenceYmm;
@@ -251,6 +253,7 @@ namespace brain
             float m_lastSpeedCorrectionMps;
             float m_lastSteerCorrectionRad;
             float m_lastPathSpeedCommandMps;
+            float m_lastPathSpeedLimitMps;
             float m_lastSteerCommandRad;
             float m_lastMpcObjective;
             float m_lastMpcMaxConstraintViolation;
@@ -259,12 +262,14 @@ namespace brain
             uint16_t m_lastReferenceSegmentIndex;
             bool m_lastUsedPreviousCorrection;
             bool m_lastUsedFeedforwardOnly;
+            bool m_lastCheckpointRecoveryHold;
             bool m_lastSpeedSaturated;
             bool m_lastSteerSaturated;
             bool m_lastSpeedRateLimited;
             bool m_lastSteerRateLimited;
             bool m_projectionValid;
             uint16_t m_projectionStaleCount;
+            uint16_t m_lastRecoverySeverityPermille;
             CMpcController m_mpcController;
             DirectionSegment m_directionSegments[MAX_DIRECTION_SEGMENTS];
             int16_t m_lastCommandedSpeed;
