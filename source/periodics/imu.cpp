@@ -39,6 +39,7 @@
 #define BNO055_LINEAR_ACCEL_DIV_MSQ_int 100
 #define precision_scaling_factor        1000
 #define MAX_ACCEPTED_YAW_STEP_DEG       25.0f
+#define BNO055_I2C_FREQUENCY_HZ         400000
 
 namespace
 {
@@ -87,18 +88,18 @@ namespace periodics{
         , m_lastPitchDegrees(0.0f)
         , m_lastYawDegrees(0.0f)
         , m_hasValidYaw(false)
+        , m_isConfigured(false)
         , m_sampleAccumulatorMs(0U)
         , m_publishAccumulatorMs(0U)
         , m_reportIntervalMs(c_defaultReportIntervalMs)
+        , m_readFailureCount(0U)
+        , m_yawRejectCount(0U)
+        , m_recoveryAccumulatorMs(c_recoveryRetryIntervalMs)
     {
         if (f_period.count() < static_cast<int64_t>(c_minTaskPeriodMs))
         {
             setNewPeriod(c_minTaskPeriodMs);
         }
-        
-        s32 comres = BNO055_ERROR;
-        /* variable used to set the power mode of the sensor*/
-        u8 power_mode = BNO055_INIT_VALUE;
 
         /*---------------------------------------------------------------------------*
         *********************** START INITIALIZATION ************************
@@ -108,87 +109,14 @@ namespace periodics{
         *  i2c_instance variable member will be initialized with the actual I2C of the target board.
         *---------------------------------------------------------------------------------------------------*/      
         i2c_instance = new I2C(SDA, SCL);
-        i2c_instance->frequency(400000);
+        i2c_instance->frequency(BNO055_I2C_FREQUENCY_HZ);
 
         ThisThread::sleep_for(chrono::milliseconds(300));
 
         /*  Based on the user need configure I2C interface.
         *  It is example code to explain how to use the bno055 API*/
         I2C_routine();
-
-        /*--------------------------------------------------------------------------*
-        *  This API used to assign the value/reference of
-        *  the following parameters
-        *  I2C address
-        *  Bus Write
-        *  Bus read
-        *  Chip id
-        *  Page id
-        *  Accel revision id
-        *  Mag revision id
-        *  Gyro revision id
-        *  Boot loader revision id
-        *  Software revision id
-        *-------------------------------------------------------------------------*/
-        comres = bno055_init(&bno055);
-
-        /*  For initializing the BNO sensor it is required to the operation mode
-        * of the sensor as NORMAL
-        * Normal mode can set from the register
-        * Page - page0
-        * register - 0x3E
-        * bit positions - 0 and 1*/
-        power_mode = BNO055_POWER_MODE_NORMAL;
-
-        /* set the power mode as NORMAL*/
-        comres += bno055_set_power_mode(power_mode);
-
-        /************************* START READ RAW DATA ********
-        * operation modes of the sensor
-        * operation mode can set from the register
-        * page - page0
-        * register - 0x3D
-        * bit - 0 to 3
-        * for sensor data read following operation mode have to set
-        * SENSOR MODE
-        * 0x01 - BNO055_OPERATION_MODE_ACCONLY
-        * 0x02 - BNO055_OPERATION_MODE_MAGONLY
-        * 0x03 - BNO055_OPERATION_MODE_GYRONLY
-        * 0x04 - BNO055_OPERATION_MODE_ACCMAG
-        * 0x05 - BNO055_OPERATION_MODE_ACCGYRO
-        * 0x06 - BNO055_OPERATION_MODE_MAGGYRO
-        * 0x07 - BNO055_OPERATION_MODE_AMG
-        * based on the user need configure the operation mode*/
-
-        /************************* START READ RAW FUSION DATA ********
-         * For reading fusion data it is required to set the
-         * operation modes of the sensor
-         * operation mode can set from the register
-         * page - page0
-         * register - 0x3D
-         * bit - 0 to 3
-         * for sensor data read following operation mode have to set
-         * FUSION MODE
-         * 0x08 - BNO055_OPERATION_MODE_IMUPLUS
-         * 0x09 - BNO055_OPERATION_MODE_COMPASS
-         * 0x0A - BNO055_OPERATION_MODE_M4G
-         * 0x0B - BNO055_OPERATION_MODE_NDOF_FMC_OFF
-         * 0x0C - BNO055_OPERATION_MODE_NDOF
-         * based on the user need configure the operation mode*/
-        comres += bno055_set_operation_mode(BNO055_OPERATION_MODE_NDOF);
-
-        /*----------------------------------------------------------------*
-        ************************* END INITIALIZATION *************************
-        *-----------------------------------------------------------------*/
-        u8 euler_unit_u8 = BNO055_INIT_VALUE;
-
-        /* Read the current Euler unit and set the
-        * unit as degree if the unit is in radians */
-        comres = bno055_get_euler_unit(&euler_unit_u8);
-        if (euler_unit_u8 != BNO055_EULER_UNIT_DEG)
-        {
-            comres += bno055_set_euler_unit(BNO055_EULER_UNIT_DEG);
-        }
+        m_isConfigured = configureSensor();
 
     }
 
@@ -269,6 +197,103 @@ namespace periodics{
     bool CImu::hasValidYaw() const
     {
         return m_hasValidYaw;
+    }
+
+    bool CImu::configureSensor()
+    {
+        s32 comres = BNO055_ERROR;
+        u8 power_mode = BNO055_POWER_MODE_NORMAL;
+        u8 euler_unit_u8 = BNO055_INIT_VALUE;
+
+        comres = bno055_init(&bno055);
+        if (comres != BNO055_SUCCESS)
+        {
+            return false;
+        }
+
+        comres = bno055_set_power_mode(power_mode);
+        if (comres != BNO055_SUCCESS)
+        {
+            return false;
+        }
+
+        comres = bno055_set_operation_mode(BNO055_OPERATION_MODE_NDOF);
+        if (comres != BNO055_SUCCESS)
+        {
+            return false;
+        }
+
+        comres = bno055_get_euler_unit(&euler_unit_u8);
+        if (comres != BNO055_SUCCESS)
+        {
+            return false;
+        }
+
+        if (euler_unit_u8 != BNO055_EULER_UNIT_DEG)
+        {
+            comres = bno055_set_euler_unit(BNO055_EULER_UNIT_DEG);
+            if (comres != BNO055_SUCCESS)
+            {
+                return false;
+            }
+        }
+
+        m_readFailureCount = 0U;
+        m_recoveryAccumulatorMs = 0U;
+        return true;
+    }
+
+    void CImu::handleReadError()
+    {
+        if (m_readFailureCount < c_maxReadFailures)
+        {
+            ++m_readFailureCount;
+        }
+
+        if (m_readFailureCount >= c_maxReadFailures)
+        {
+            m_isConfigured = false;
+            m_hasValidYaw = false;
+            m_yawRejectCount = 0U;
+            m_readFailureCount = 0U;
+            m_recoveryAccumulatorMs = c_recoveryRetryIntervalMs;
+        }
+    }
+
+    bool CImu::readEulerDegrees(s32& f_rollDegrees, s32& f_pitchDegrees, s32& f_yawDegrees)
+    {
+        struct bno055_euler_t l_euler = { BNO055_INIT_VALUE, BNO055_INIT_VALUE, BNO055_INIT_VALUE };
+        const s8 comres = bno055_read_euler_hrp(&l_euler);
+        if (comres != BNO055_SUCCESS)
+        {
+            handleReadError();
+            return false;
+        }
+
+        f_rollDegrees = (l_euler.r * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
+        f_pitchDegrees = (l_euler.p * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
+        f_yawDegrees = (l_euler.h * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
+        m_readFailureCount = 0U;
+        return true;
+    }
+
+    bool CImu::acceptYawSample(float f_yawDegrees)
+    {
+        if (m_hasValidYaw)
+        {
+            const float l_yawStepDegrees = wrapDegrees(f_yawDegrees - m_lastYawDegrees);
+            if (fabsf(l_yawStepDegrees) > MAX_ACCEPTED_YAW_STEP_DEG)
+            {
+                if (m_yawRejectCount < c_maxYawRejects)
+                {
+                    ++m_yawRejectCount;
+                }
+                return (m_yawRejectCount >= c_maxYawRejects);
+            }
+        }
+
+        m_yawRejectCount = 0U;
+        return true;
     }
 
     /* This API is an example for reading sensor data
@@ -617,13 +642,25 @@ namespace periodics{
         u8 array[I2C_BUFFER_LEN];
         u8 stringpos = BNO055_INIT_VALUE;
 
+        if ((i2c_instance == nullptr) || (reg_data == nullptr) || (cnt == 0U) || (cnt >= I2C_BUFFER_LEN))
+        {
+            return (s8)BNO055_ERROR;
+        }
+
         array[BNO055_INIT_VALUE] = reg_addr;
         for (stringpos = BNO055_INIT_VALUE; stringpos < cnt; stringpos++)
         {
             array[stringpos + BNO055_I2C_BUS_WRITE_ARRAY_INDEX] = *(reg_data + stringpos);
         }
 
-        if (i2c_instance->write(dev_addr, (const char*)array, cnt + 1) == 0)
+        int l_writeResult = i2c_instance->write(dev_addr, (const char*)array, cnt + 1);
+        if (l_writeResult != 0)
+        {
+            i2c_instance->frequency(BNO055_I2C_FREQUENCY_HZ);
+            l_writeResult = i2c_instance->write(dev_addr, (const char*)array, cnt + 1);
+        }
+
+        if (l_writeResult == 0)
         {
             BNO055_iERROR = BNO055_SUCCESS; // Return success (0)
         }
@@ -656,10 +693,6 @@ namespace periodics{
     s8 CImu::BNO055_I2C_bus_read(u8 dev_addr, u8 reg_addr, u8 *reg_data, u8 cnt)
     {
         s32 BNO055_iERROR = BNO055_INIT_VALUE;
-        u8 array[I2C_BUFFER_LEN] = { BNO055_INIT_VALUE };
-        u8 stringpos = BNO055_INIT_VALUE;
-
-        array[BNO055_INIT_VALUE] = reg_addr;
 
         /* Please take the below API as your reference
         * for read the data using I2C communication
@@ -671,27 +704,29 @@ namespace periodics{
         * In the driver BNO055_SUCCESS defined as 0
         * and FAILURE defined as -1
         */
-        for (stringpos = BNO055_INIT_VALUE; stringpos < cnt; stringpos++)
+
+        if ((i2c_instance == nullptr) || (reg_data == nullptr) || (cnt == 0U))
         {
-            *(reg_data + stringpos) = array[stringpos];
+            return (s8)BNO055_ERROR;
         }
 
-        // Write the register address to set the pointer for reading
-        if (i2c_instance->write(dev_addr, (const char*)&reg_addr, 1) != 0)
+        for (u8 attempt = BNO055_INIT_VALUE; attempt < 2U; ++attempt)
         {
-            BNO055_iERROR = BNO055_ERROR; // Return error (-1)
-            return (s8)BNO055_iERROR;
+            // Write the register address to set the pointer for reading
+            if (i2c_instance->write(dev_addr, (const char*)&reg_addr, 1, true) == 0)
+            {
+                // Read the data from the specified register address
+                if (i2c_instance->read(dev_addr, (char*)reg_data, cnt) == 0)
+                {
+                    BNO055_iERROR = BNO055_SUCCESS; // Return success (0)
+                    return (s8)BNO055_iERROR;
+                }
+            }
+
+            i2c_instance->frequency(BNO055_I2C_FREQUENCY_HZ);
         }
 
-        // Read the data from the specified register address
-        if (i2c_instance->read(dev_addr, (char*)reg_data, cnt) == 0)
-        {
-            BNO055_iERROR = BNO055_SUCCESS; // Return success (0)
-        }
-        else
-        {
-            BNO055_iERROR = BNO055_ERROR; // Return error (-1)
-        }
+        BNO055_iERROR = BNO055_ERROR; // Return error (-1)
         return (s8)BNO055_iERROR;
     }
     
@@ -743,7 +778,6 @@ namespace periodics{
     */
     void CImu::_run()
     {
-        s8 comres = BNO055_SUCCESS;
         const uint32_t l_taskPeriodMs = static_cast<uint32_t>(m_period.count());
         const bool l_motionActive =
             (fabsf(m_encoder.getLinearSpeed()) > 5.0f) ||
@@ -757,31 +791,35 @@ namespace periodics{
         }
         m_sampleAccumulatorMs = 0U;
 
-        s16 s16_euler_h_raw = BNO055_INIT_VALUE;
-        s16 s16_euler_p_raw = BNO055_INIT_VALUE;
-        s16 s16_euler_r_raw = BNO055_INIT_VALUE;
-
-        comres += bno055_read_euler_h(&s16_euler_h_raw);
-        if (comres != BNO055_SUCCESS) return;
-
-        comres += bno055_read_euler_p(&s16_euler_p_raw);
-        if (comres != BNO055_SUCCESS) return;
-
-        comres += bno055_read_euler_r(&s16_euler_r_raw);
-        if (comres != BNO055_SUCCESS) return;
-
-        const s32 s32_euler_h_deg = (s16_euler_h_raw * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
-        const s32 s32_euler_p_deg = (s16_euler_p_raw * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
-        const s32 s32_euler_r_deg = (s16_euler_r_raw * precision_scaling_factor) / BNO055_EULER_DIV_DEG_int;
-        const float l_yawDegrees = static_cast<float>(s32_euler_h_deg) / 1000.0f;
-
-        if (m_hasValidYaw)
+        if (!m_isConfigured)
         {
-            const float l_yawStepDegrees = wrapDegrees(l_yawDegrees - m_lastYawDegrees);
-            if (fabsf(l_yawStepDegrees) > MAX_ACCEPTED_YAW_STEP_DEG)
+            m_recoveryAccumulatorMs += l_samplePeriodMs;
+            if (m_recoveryAccumulatorMs < c_recoveryRetryIntervalMs)
             {
                 return;
             }
+            m_recoveryAccumulatorMs = 0U;
+            m_isConfigured = configureSensor();
+            if (!m_isConfigured)
+            {
+                return;
+            }
+        }
+
+        s32 s32_euler_h_deg = BNO055_INIT_VALUE;
+        s32 s32_euler_p_deg = BNO055_INIT_VALUE;
+        s32 s32_euler_r_deg = BNO055_INIT_VALUE;
+
+        if (!readEulerDegrees(s32_euler_r_deg, s32_euler_p_deg, s32_euler_h_deg))
+        {
+            return;
+        }
+
+        const float l_yawDegrees = static_cast<float>(s32_euler_h_deg) / 1000.0f;
+
+        if (!acceptYawSample(l_yawDegrees))
+        {
+            return;
         }
 
         m_lastRollDegrees = static_cast<float>(s32_euler_r_deg) / 1000.0f;

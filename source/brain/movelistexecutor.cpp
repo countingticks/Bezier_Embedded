@@ -434,6 +434,7 @@ namespace brain
             static_cast<uint32_t>(arrivalToleranceMm) :
             0U;
         m_holdFinalUntilArrival = m_hasReferenceTrajectory &&
+                                  (m_arrivalToleranceMm > 0U) &&
                                   ((parsed >= 4 && holdFinal >= 1) || (parsed == 3 && arrivalToleranceMm > 0));
 
         rebuildDirectionSegments();
@@ -1219,7 +1220,7 @@ namespace brain
         return bestProgressMm;
     }
 
-    bool CMovelistexecutor::hasReachedGoal() const
+    bool CMovelistexecutor::hasReachedGoal()
     {
         if (!m_hasReferenceTrajectory || !m_poseReady || m_moveCount == 0U || m_arrivalToleranceMm == 0U)
         {
@@ -1231,9 +1232,20 @@ namespace brain
         const float remainingProgressMm = static_cast<float>(finalFrame.progress_mm) - m_matchedProgressMm;
         const float goalDx = static_cast<float>(finalFrame.ref_x_mm) - m_poseXmm;
         const float goalDy = static_cast<float>(finalFrame.ref_y_mm) - m_poseYmm;
+        const bool withinProgressTolerance = remainingProgressMm <= toleranceMm;
+        const bool withinGoalRadius = ((goalDx * goalDx) + (goalDy * goalDy)) <= (toleranceMm * toleranceMm);
 
-        return remainingProgressMm <= toleranceMm &&
-               ((goalDx * goalDx) + (goalDy * goalDy)) <= (toleranceMm * toleranceMm);
+        if (withinProgressTolerance && withinGoalRadius)
+        {
+            return true;
+        }
+
+        if (m_elapsedMs < finalFrame.time_ms || (!withinProgressTolerance && !withinGoalRadius))
+        {
+            return false;
+        }
+
+        return fabsf(m_encoder.getLinearSpeed()) <= STARTUP_RELEASE_SPEED_MM_S;
     }
 
     void CMovelistexecutor::updatePoseEstimate()

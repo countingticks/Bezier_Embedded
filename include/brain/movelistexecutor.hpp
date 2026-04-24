@@ -117,7 +117,7 @@ namespace brain
                 bool& projectionValid,
                 uint16_t& projectedMoveIndex
             );
-            bool hasReachedGoal() const;
+            bool hasReachedGoal();
             void updatePoseEstimate();
             void refreshPoseSnapshot();
             void resetExecutionState(bool clearBuffer);

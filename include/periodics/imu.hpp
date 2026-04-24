@@ -83,6 +83,10 @@ namespace periodics
             // s32 bno055_data_readout_template(void);
             /* Run method */
             virtual void    _run();
+            bool configureSensor();
+            void handleReadError();
+            bool readEulerDegrees(s32& f_rollDegrees, s32& f_pitchDegrees, s32& f_yawDegrees);
+            bool acceptYawSample(float f_yawDegrees);
 
             /*----------------------------------------------------------------------------*
             *  struct bno055_t parameters can be accessed by using BNO055
@@ -112,15 +116,22 @@ namespace periodics
             float m_lastPitchDegrees;
             float m_lastYawDegrees;
             bool m_hasValidYaw;
+            bool m_isConfigured;
             uint32_t m_sampleAccumulatorMs;
             uint32_t m_publishAccumulatorMs;
             uint32_t m_reportIntervalMs;
+            uint8_t m_readFailureCount;
+            uint8_t m_yawRejectCount;
+            uint32_t m_recoveryAccumulatorMs;
 
             static constexpr uint32_t c_minTaskPeriodMs = 20U;
             static constexpr uint32_t c_motionSamplePeriodMs = 20U;
             static constexpr uint32_t c_idleSamplePeriodMs = 100U;
             static constexpr uint32_t c_defaultReportIntervalMs = 250U;
             static constexpr uint32_t c_minReportIntervalMs = 100U;
+            static constexpr uint8_t c_maxReadFailures = 3U;
+            static constexpr uint8_t c_maxYawRejects = 3U;
+            static constexpr uint32_t c_recoveryRetryIntervalMs = 1000U;
     }; // class CImu
 
 }; // namespace utils

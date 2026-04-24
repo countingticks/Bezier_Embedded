@@ -1,12 +1,12 @@
-# Graph Report - D:\Code\bosch\Bezier_Embedded  (2026-04-19)
+# Graph Report - D:\Code\bosch\Bezier_Embedded  (2026-04-24)
 
 ## Corpus Check
-- 51 files · ~170,970 words
+- 51 files · ~171,330 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 498 nodes · 1117 edges · 47 communities detected
-- Extraction: 95% EXTRACTED · 5% INFERRED · 0% AMBIGUOUS · INFERRED: 56 edges (avg confidence: 0.8)
+- 502 nodes · 1133 edges · 47 communities detected
+- Extraction: 94% EXTRACTED · 6% INFERRED · 0% AMBIGUOUS · INFERRED: 63 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
@@ -60,13 +60,13 @@
 
 ## God Nodes (most connected - your core abstractions)
 1. `bno055_write_page_id()` - 177 edges
-2. `bno055_set_operation_mode()` - 61 edges
+2. `bno055_set_operation_mode()` - 62 edges
 3. `bno055_get_operation_mode()` - 60 edges
 4. `applyInterpolatedCommand()` - 27 edges
-5. `bno055_set_euler_unit()` - 20 edges
-6. `bno055_set_accel_unit()` - 19 edges
-7. `bno055_set_gyro_unit()` - 19 edges
-8. `bno055_get_euler_unit()` - 19 edges
+5. `bno055_set_euler_unit()` - 21 edges
+6. `bno055_get_euler_unit()` - 20 edges
+7. `bno055_set_accel_unit()` - 19 edges
+8. `bno055_set_gyro_unit()` - 19 edges
 9. `bno055_get_accel_unit()` - 18 edges
 10. `bno055_get_gyro_unit()` - 18 edges
 
@@ -74,13 +74,13 @@
 - `CMovelistexecutor()` --semantically_similar_to--> `Robot State Machine`  [INFERRED] [semantically similar]
   D:\Code\bosch\Bezier_Embedded\source\brain\movelistexecutor.cpp → source/brain/robotstatemachine.cpp
 - `updatePoseEstimate()` --calls--> `hasValidYaw()`  [INFERRED]
-  D:\Code\bosch\Bezier_Embedded\source\brain\movelistexecutor.cpp → source\periodics\imu.cpp
+  D:\Code\bosch\Bezier_Embedded\source\brain\movelistexecutor.cpp → D:\Code\bosch\Bezier_Embedded\source\periodics\imu.cpp
 - `updatePoseEstimate()` --calls--> `getYawDegrees()`  [INFERRED]
-  D:\Code\bosch\Bezier_Embedded\source\brain\movelistexecutor.cpp → source\periodics\imu.cpp
+  D:\Code\bosch\Bezier_Embedded\source\brain\movelistexecutor.cpp → D:\Code\bosch\Bezier_Embedded\source\periodics\imu.cpp
 - `CImu()` --calls--> `setNewPeriod()`  [INFERRED]
-  source\periodics\imu.cpp → source\utils\task.cpp
-- `CImu()` --calls--> `bno055_init()`  [INFERRED]
-  source\periodics\imu.cpp → source\drivers\bno055.cpp
+  D:\Code\bosch\Bezier_Embedded\source\periodics\imu.cpp → source\utils\task.cpp
+- `CImu()` --calls--> `bno055_set_operation_mode()`  [INFERRED]
+  D:\Code\bosch\Bezier_Embedded\source\periodics\imu.cpp → source\drivers\bno055.cpp
 
 ## Hyperedges (group relationships)
 - **Motion Control Pipeline** — robotstatemachine_crobotstatemachine, movelistexecutor_cmovelistexecutor, mpccontroller_cmpccontroller [INFERRED 0.85]
@@ -99,11 +99,11 @@ Nodes (56): getLinearSpeed(), resetTravelDistance(), serialCallbackENCTESTcomman
 
 ### Community 2 - "Community 2"
 Cohesion: 0.07
-Nodes (57): bno055_get_gyro_auto_sleep_durn(), bno055_get_operation_mode(), bno055_gyro_set_auto_sleep_durn(), bno055_set_accel_any_motion_durn(), bno055_set_accel_any_motion_no_motion_axis_enable(), bno055_set_accel_any_motion_thres(), bno055_set_accel_bw(), bno055_set_accel_high_g_axis_enable() (+49 more)
+Nodes (56): bno055_get_gyro_auto_sleep_durn(), bno055_get_operation_mode(), bno055_gyro_set_auto_sleep_durn(), bno055_set_accel_any_motion_durn(), bno055_set_accel_any_motion_no_motion_axis_enable(), bno055_set_accel_any_motion_thres(), bno055_set_accel_bw(), bno055_set_accel_high_g_axis_enable() (+48 more)
 
 ### Community 3 - "Community 3"
 Cohesion: 0.11
-Nodes (30): bno055_convert_double_euler_h_deg(), bno055_convert_double_euler_h_rad(), bno055_convert_double_euler_hpr_deg(), bno055_convert_double_euler_hpr_rad(), bno055_convert_double_euler_p_deg(), bno055_convert_double_euler_p_rad(), bno055_convert_double_euler_r_deg(), bno055_convert_double_euler_r_rad() (+22 more)
+Nodes (35): bno055_convert_double_euler_h_deg(), bno055_convert_double_euler_h_rad(), bno055_convert_double_euler_hpr_deg(), bno055_convert_double_euler_hpr_rad(), bno055_convert_double_euler_p_deg(), bno055_convert_double_euler_p_rad(), bno055_convert_double_euler_r_deg(), bno055_convert_double_euler_r_rad() (+27 more)
 
 ### Community 4 - "Community 4"
 Cohesion: 0.11
@@ -155,51 +155,51 @@ Nodes (0):
 
 ### Community 16 - "Community 16"
 Cohesion: 0.67
-Nodes (3): bno055_convert_gravity_double_x_msq(), bno055_convert_gravity_float_x_msq(), bno055_read_gravity_x()
+Nodes (3): bno055_convert_double_gravity_xyz_msq(), bno055_convert_float_gravity_xyz_msq(), bno055_read_gravity_xyz()
 
 ### Community 17 - "Community 17"
 Cohesion: 0.67
-Nodes (3): bno055_convert_double_gravity_xyz_msq(), bno055_convert_float_gravity_xyz_msq(), bno055_read_gravity_xyz()
+Nodes (3): bno055_convert_double_linear_accel_y_msq(), bno055_convert_float_linear_accel_y_msq(), bno055_read_linear_accel_y()
 
 ### Community 18 - "Community 18"
 Cohesion: 0.67
-Nodes (3): bno055_convert_gravity_double_y_msq(), bno055_convert_gravity_float_y_msq(), bno055_read_gravity_y()
+Nodes (3): bno055_convert_double_mag_y_uT(), bno055_convert_float_mag_y_uT(), bno055_read_mag_y()
 
 ### Community 19 - "Community 19"
 Cohesion: 0.67
-Nodes (3): bno055_convert_double_mag_xyz_uT(), bno055_convert_float_mag_xyz_uT(), bno055_read_mag_xyz()
+Nodes (3): bno055_convert_double_linear_accel_xyz_msq(), bno055_convert_float_linear_accel_xyz_msq(), bno055_read_linear_accel_xyz()
 
 ### Community 20 - "Community 20"
 Cohesion: 0.67
-Nodes (3): bno055_convert_double_mag_x_uT(), bno055_convert_float_mag_x_uT(), bno055_read_mag_x()
+Nodes (3): bno055_convert_gravity_double_x_msq(), bno055_convert_gravity_float_x_msq(), bno055_read_gravity_x()
 
 ### Community 21 - "Community 21"
 Cohesion: 0.67
-Nodes (3): bno055_convert_double_linear_accel_x_msq(), bno055_convert_float_linear_accel_x_msq(), bno055_read_linear_accel_x()
+Nodes (3): bno055_convert_gravity_double_y_msq(), bno055_convert_gravity_float_y_msq(), bno055_read_gravity_y()
 
 ### Community 22 - "Community 22"
 Cohesion: 0.67
-Nodes (3): bno055_convert_double_linear_accel_z_msq(), bno055_convert_float_linear_accel_z_msq(), bno055_read_linear_accel_z()
+Nodes (3): bno055_convert_double_mag_x_uT(), bno055_convert_float_mag_x_uT(), bno055_read_mag_x()
 
 ### Community 23 - "Community 23"
 Cohesion: 0.67
-Nodes (3): bno055_convert_double_linear_accel_xyz_msq(), bno055_convert_float_linear_accel_xyz_msq(), bno055_read_linear_accel_xyz()
+Nodes (3): bno055_convert_gravity_double_z_msq(), bno055_convert_gravity_float_z_msq(), bno055_read_gravity_z()
 
 ### Community 24 - "Community 24"
 Cohesion: 0.67
-Nodes (3): bno055_convert_double_linear_accel_y_msq(), bno055_convert_float_linear_accel_y_msq(), bno055_read_linear_accel_y()
+Nodes (3): bno055_convert_double_mag_z_uT(), bno055_convert_float_mag_z_uT(), bno055_read_mag_z()
 
 ### Community 25 - "Community 25"
 Cohesion: 0.67
-Nodes (3): bno055_convert_gravity_double_z_msq(), bno055_convert_gravity_float_z_msq(), bno055_read_gravity_z()
+Nodes (3): bno055_convert_double_linear_accel_x_msq(), bno055_convert_float_linear_accel_x_msq(), bno055_read_linear_accel_x()
 
 ### Community 26 - "Community 26"
 Cohesion: 0.67
-Nodes (3): bno055_convert_double_mag_y_uT(), bno055_convert_float_mag_y_uT(), bno055_read_mag_y()
+Nodes (3): bno055_convert_double_mag_xyz_uT(), bno055_convert_float_mag_xyz_uT(), bno055_read_mag_xyz()
 
 ### Community 27 - "Community 27"
 Cohesion: 0.67
-Nodes (3): bno055_convert_double_mag_z_uT(), bno055_convert_float_mag_z_uT(), bno055_read_mag_z()
+Nodes (3): bno055_convert_double_linear_accel_z_msq(), bno055_convert_float_linear_accel_z_msq(), bno055_read_linear_accel_z()
 
 ### Community 28 - "Community 28"
 Cohesion: 1.0
@@ -321,16 +321,16 @@ Nodes (1): Notifications from Power Board
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `_run()` connect `Community 3` to `Community 1`?**
-  _High betweenness centrality (0.324) - this node is a cross-community bridge._
+  _High betweenness centrality (0.322) - this node is a cross-community bridge._
 - **Why does `getLinearSpeed()` connect `Community 1` to `Community 3`, `Community 4`?**
   _High betweenness centrality (0.288) - this node is a cross-community bridge._
 - **Why does `applyInterpolatedCommand()` connect `Community 1` to `Community 5`?**
-  _High betweenness centrality (0.199) - this node is a cross-community bridge._
+  _High betweenness centrality (0.193) - this node is a cross-community bridge._
+- **Are the 2 inferred relationships involving `bno055_set_operation_mode()` (e.g. with `configureSensor()` and `CImu()`) actually correct?**
+  _`bno055_set_operation_mode()` has 2 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 6 inferred relationships involving `applyInterpolatedCommand()` (e.g. with `solve()` and `getLinearSpeed()`) actually correct?**
   _`applyInterpolatedCommand()` has 6 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 2 inferred relationships involving `bno055_set_euler_unit()` (e.g. with `configureSensor()` and `CImu()`) actually correct?**
+  _`bno055_set_euler_unit()` has 2 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `CEncoder`, `ISpeedingCommand`, `ISteeringCommand` to the rest of the system?**
   _19 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `Community 0` be split into smaller, more focused modules?**
-  _Cohesion score 0.04 - nodes in this community are weakly interconnected._
-- **Should `Community 1` be split into smaller, more focused modules?**
-  _Cohesion score 0.07 - nodes in this community are weakly interconnected._
